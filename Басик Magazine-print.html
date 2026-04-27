@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Басик Magazine · PDF</title>
+<link rel="stylesheet" href="styles.css" />
+<style>
+  /* Print-specific overrides */
+  html, body {
+    background: var(--cream) !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  /* Kill sticky nav — show it once at top of each page block */
+  .nav { position: static !important; }
+  /* Disable hover-only transforms */
+  * { transition: none !important; animation: none !important; }
+  /* Paper grain off for print cleanliness */
+  body::before { display: none !important; }
+
+  /* Each "page block" becomes its own print page */
+  .print-page {
+    break-after: page;
+    page-break-after: always;
+    padding-bottom: 40px;
+  }
+  .print-page:last-child { break-after: auto; page-break-after: auto; }
+
+  /* Avoid splits inside big visual blocks */
+  .page-enter > section { break-inside: avoid-page; }
+  h1, h2, h3 { break-after: avoid; }
+  img { break-inside: avoid; }
+
+  @media print {
+    @page {
+      size: A3 portrait;
+      margin: 10mm;
+    }
+    .nav { display: none !important; }
+    .foot { margin-top: 24px !important; padding: 32px 0 !important; }
+    body { font-size: 14px; }
+    .marquee { display: none !important; }
+  }
+
+  @media screen {
+    .print-hint {
+      position: fixed; top: 16px; right: 16px; z-index: 1000;
+      background: var(--ink); color: var(--cream);
+      padding: 10px 16px; border-radius: 999px;
+      font-family: var(--sans); font-size: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.25);
+    }
+  }
+  @media print {
+    .print-hint { display: none !important; }
+  }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div class="print-hint">Нажмите Cmd/Ctrl+P — «Сохранить как PDF»</div>
+<div id="root"></div>
+<script type="text/babel" src="shared.jsx"></script>
+<script type="text/babel" src="page-home.jsx"></script>
+<script type="text/babel" src="page-basik.jsx"></script>
+<script type="text/babel" src="page-ranking.jsx"></script>
+<script type="text/babel" src="page-care.jsx"></script>
+<script type="text/babel" src="page-gallery.jsx"></script>
+<script type="text/babel">
+  /* global React, ReactDOM, HomePage, BasikPage, RankingPage, CarePage, GalleryPage, Footer */
+  const noop = () => {};
+
+  function PrintApp() {
+    const pages = [
+      { id: 'home', C: HomePage },
+      { id: 'basik', C: BasikPage },
+      { id: 'ranking', C: RankingPage },
+      { id: 'care', C: CarePage },
+      { id: 'gallery', C: GalleryPage },
+    ];
+    return (
+      <div>
+        {pages.map(({ id, C }) => (
+          <div key={id} className="print-page">
+            <C setPage={noop} />
+          </div>
+        ))}
+        <Footer setPage={noop} />
+      </div>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<PrintApp />);
+
+  // Auto-print once everything is ready
+  (async () => {
+    try {
+      if (document.fonts && document.fonts.ready) {
+        await document.fonts.ready;
+      }
+      // Let images load
+      const imgs = Array.from(document.images);
+      await Promise.all(imgs.map(img => img.complete ? Promise.resolve() : new Promise(res => {
+        img.addEventListener('load', res, { once: true });
+        img.addEventListener('error', res, { once: true });
+      })));
+      await new Promise(r => setTimeout(r, 700));
+      window.print();
+    } catch (e) { console.warn(e); }
+  })();
+</script>
+</body>
+</html>
