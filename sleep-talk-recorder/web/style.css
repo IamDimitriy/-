@@ -1,0 +1,118 @@
+/* One deliberate dark look: the app is used in a dark bedroom.
+   Layout: a single narrow column; the night screen is a black field with a dim clock. */
+:root {
+  --bg: #0d0f17;
+  --panel: #161926;
+  --line: #262a3b;
+  --fg: #dcd8cc;
+  --muted: #8b8a99;
+  --accent: #e0a458;      /* warm amber, easy on eyes at night */
+  --accent-ink: #1b1309;
+  --danger: #e57a6e;
+  --night: #000;
+  --night-fg: #7a4a2a;    /* very dim amber for the clock */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --num: ui-rounded, "SF Pro Rounded", -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.5 var(--font);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.screen {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: calc(env(safe-area-inset-top, 0px) + 28px) 16px calc(env(safe-area-inset-bottom, 0px) + 32px);
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+[hidden] { display: none !important; }
+
+h1 { font-size: 34px; line-height: 1.1; margin: 0 0 8px; letter-spacing: -0.01em; }
+h2 { font-size: 20px; margin: 0 0 4px; font-weight: 650; }
+.lead { margin: 0; color: var(--muted); max-width: 40ch; text-wrap: pretty; }
+
+button { font: inherit; cursor: pointer; }
+button:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.primary {
+  width: 100%;
+  padding: 18px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 18px;
+  font-weight: 650;
+}
+.primary:active { transform: scale(0.99); }
+.primary:disabled { opacity: 0.6; }
+
+.error { margin: 0; color: var(--danger); }
+
+.settings { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 14px 0; }
+.settings summary { cursor: pointer; color: var(--fg); font-weight: 550; }
+.settings[open] summary { margin-bottom: 16px; }
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.field label { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); }
+.field output { color: var(--fg); font-variant-numeric: tabular-nums; }
+.scale { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+input[type="time"] {
+  background: var(--panel); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 10px; padding: 10px 12px; font: inherit; width: max-content;
+}
+.check { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; }
+.check input { width: 20px; height: 20px; accent-color: var(--accent); }
+
+.empty { color: var(--muted); margin: 0; }
+.nightcard { border-bottom: 1px solid var(--line); padding: 12px 0 16px; }
+.nightcard summary {
+  list-style: none; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; cursor: pointer;
+}
+.nightcard summary::-webkit-details-marker { display: none; }
+.nightcard .date { font-weight: 600; }
+.nightcard .sum { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.clips { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
+.clip { display: grid; grid-template-columns: 4.2em 1fr; gap: 4px 12px; align-items: center; }
+.clip time { font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 600; }
+.clip audio { width: 100%; height: 40px; min-width: 0; }
+.clip .actions { grid-column: 2; display: flex; align-items: baseline; gap: 16px; font-size: 14px; color: var(--muted); }
+.link { background: none; border: 0; padding: 4px 0; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
+.link.danger { color: var(--danger); }
+.nightcard .actions-night { margin-top: 12px; display: flex; gap: 16px; flex-wrap: wrap; }
+
+.foot { color: var(--muted); font-size: 14px; margin: 0; }
+
+/* Night screen */
+#night {
+  max-width: none; min-height: 100%;
+  background: var(--night);
+  justify-content: center;
+  transition: opacity 2s;
+}
+body.is-night { background: var(--night); }
+.night-inner { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; }
+.clock { font: 300 84px/1 var(--num); color: var(--night-fg); margin: 0; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.status, .count, .hint { margin: 0; color: var(--night-fg); }
+.hint { font-size: 14px; max-width: 30ch; }
+.meter { width: 160px; height: 3px; background: #1a1210; border-radius: 2px; overflow: hidden; }
+#meterBar { height: 100%; width: 0; background: var(--night-fg); transition: width 0.2s; }
+.ghost {
+  margin-top: 28px; background: none; color: var(--night-fg);
+  border: 1px solid #3a2416; border-radius: 12px; padding: 14px 22px;
+}
+#night.dim .night-inner { opacity: 0.25; }
+#night .night-inner { transition: opacity 1.5s; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
