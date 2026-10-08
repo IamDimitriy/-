@@ -8,6 +8,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import sonnik.core.Episode
+import sonnik.core.Minute
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -63,6 +64,17 @@ class NightsTest {
         val nights = Nights.list(ctx)
         assertEquals(1, nights.size)
         assertTrue(nights.single().clips.isEmpty())
+    }
+
+    @Test fun minuteStatisticsAreReadBack() {
+        val dir = Nights.dirFor(ctx, at("2026-10-09T00:00"))
+        Nights.appendMinute(dir, Minute(0, 0.0, 0.0, 1.0, 0.02))
+        Nights.appendMinute(dir, Minute(1, 0.0, 30.0, 0.0, 0.1))
+        Nights.appendMinute(dir, Minute(2, 2.5, 0.0, 0.0, 0.3))
+        val night = Nights.list(ctx).single()
+        assertEquals(listOf(0, 1, 2), night.minutes.map { it.index })
+        assertEquals(1, night.summary.snoreMinutes)
+        assertEquals(2.5, night.summary.speechS)
     }
 
     @Test fun deletingAClipAndANight() {

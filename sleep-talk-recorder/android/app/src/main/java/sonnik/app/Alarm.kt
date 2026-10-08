@@ -1,0 +1,109 @@
+package sonnik.app
+
+import android.app.AlarmManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.util.Log
+import androidx.core.app.NotificationManagerCompat
+import sonnik.core.SmartWake
+import java.time.LocalDateTime
+import java.time.ZoneId
+
+/**
+ * The wake-up alarm.
+ *
+ * While the night is being recorded, [RecorderService] rings it early when sleep sounds light
+ * (see [SmartWake]). A plain exact alarm at the wake-up time is always set as a backup, so the
+ * alarm rings even if nothing was recorded. Whichever comes first rings; the other is ignored.
+ */
+object Alarm {
+    private const val TAG = "Sonnik"
+    private const val SNOOZE_MIN = 10L
+
+    /** The next wake-up time that has not rung yet, or null if the alarm is off. */
+    fun next(ctx: Context, now: LocalDateTime = LocalDateTime.now()): LocalDateTime? {
+        val prefs = Prefs(ctx)
+        if (!prefs.alarmOn) return null
+        val at = SmartWake.nextAlarm(now, prefs.alarmTime)
+        return if (at == prefs.rangFor) SmartWake.nextAlarm(at, prefs.alarmTime) else at
+    }
+
+    /** Rings for the wake-up time [alarmFor], once. */
+    fun ring(ctx: Context, alarmFor: LocalDateTime, smart: Boolean) {
+        val prefs = Prefs(ctx)
+        if (prefs.rangFor == alarmFor) return
+        prefs.rangFor = alarmFor
+        Log.i(TAG, "Alarm rings for $alarmFor (smart=$smart)")
+        Notifications.alarm(ctx, smart)
+        Scheduler.sync(ctx) // the backup moves to tomorrow
+    }
+
+    fun dismiss(ctx: Context) {
+        NotificationManagerCompat.from(ctx).cancel(Notifications.ALARM_ID)
+        if (Recorder.state.value.phase != Phase.IDLE) Recorder.stop(ctx) // you are awake now
+    }
+
+    fun snooze(ctx: Context) {
+        NotificationManagerCompat.from(ctx).cancel(Notifications.ALARM_ID)
+        val at = System.currentTimeMillis() + SNOOZE_MIN * 60_000
+        Scheduler.setAlarmClock(ctx, at, snoozeIntent(ctx))
+        Log.i(TAG, "Alarm snoozed for $SNOOZE_MIN min")
+    }
+
+    internal fun backupIntent(ctx: Context): PendingIntent = PendingIntent.getBroadcast(
+        ctx, 2, Intent(ctx, AlarmRingReceiver::class.java),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    private fun snoozeIntent(ctx: Context): PendingIntent = PendingIntent.getBroadcast(
+        ctx, 3, Intent(ctx, AlarmRingReceiver::class.java).putExtra(AlarmRingReceiver.EXTRA_SNOOZE, true),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    fun epochMs(t: LocalDateTime) = t.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+    /** Keeps the backup alarm in line with the settings. */
+    internal fun syncBackup(ctx: Context) {
+        val am = ctx.getSystemService(AlarmManager::class.java)
+        val pi = backupIntent(ctx)
+        am.cancel(pi)
+        val at = next(ctx) ?: return
+        Scheduler.setAlarmClock(ctx, epochMs(at), pi)
+    }
+}
+
+/** Backup alarm at the wake-up time, and the end of a snooze. */
+class AlarmRingReceiver : BroadcastReceiver() {
+    override fun onReceive(ctx: Context, intent: Intent) {
+        if (intent.getBooleanExtra(EXTRA_SNOOZE, false)) {
+            Notifications.alarm(ctx, smart = false)
+            return
+        }
+        val prefs = Prefs(ctx)
+        if (!prefs.alarmOn) return
+        // The wake-up time this backup was set for: the latest one at or before now.
+        val due = SmartWake.nextAlarm(LocalDateTime.now().minusMinutes(5), prefs.alarmTime)
+        Alarm.ring(ctx, due, smart = false)
+    }
+
+    companion object {
+        const val EXTRA_SNOOZE = "snooze"
+    }
+}
+
+/** "Turn off" and "10 more minutes" buttons on the alarm notification. */
+class AlarmActionReceiver : BroadcastReceiver() {
+    override fun onReceive(ctx: Context, intent: Intent) {
+        when (intent.action) {
+            ACTION_DISMISS -> Alarm.dismiss(ctx)
+            ACTION_SNOOZE -> Alarm.snooze(ctx)
+        }
+    }
+
+    companion object {
+        const val ACTION_DISMISS = "sonnik.ALARM_DISMISS"
+        const val ACTION_SNOOZE = "sonnik.ALARM_SNOOZE"
+    }
+}

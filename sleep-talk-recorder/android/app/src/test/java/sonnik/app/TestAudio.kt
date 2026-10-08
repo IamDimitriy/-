@@ -32,6 +32,17 @@ object TestAudio {
         (level * sin(2 * PI * 70 * i / RATE) * (0.6 + 0.4 * sin(2 * PI * 30 * i / RATE))).toFloat()
     }
 
+    /** Snoring: a low rumble on every breath, 1.5 s of sound every 4 s. */
+    fun snoring(s: Double) = FloatArray((RATE * s).toInt()) { i ->
+        val t = i.toDouble() / RATE
+        if (t % 4.0 < 1.5) (0.25 * sin(2 * PI * 70 * t) * (0.6 + 0.4 * sin(2 * PI * 28 * t))).toFloat() else 0f
+    }.let { mix(it, noise(s)) }
+
+    /** Tossing and turning: half a second of rustle every second (not speech, not snoring). */
+    fun restless(s: Double) = FloatArray((RATE * s).toInt()) { i ->
+        if ((i / (RATE / 2)) % 2 == 0) (rnd.nextDouble(-1.0, 1.0) * 0.05).toFloat() else 0f
+    }.let { mix(it, noise(s)) }
+
     fun mix(a: FloatArray, b: FloatArray) = FloatArray(a.size) { a[it] + b[it] }
 
     fun cat(vararg parts: FloatArray): ShortArray {

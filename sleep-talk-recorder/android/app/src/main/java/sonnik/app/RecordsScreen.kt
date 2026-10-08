@@ -3,6 +3,18 @@ package sonnik.app
 import android.content.Context
 import android.content.Intent
 import android.media.MediaPlayer
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import java.time.Duration
+import kotlin.math.max
+import kotlin.math.sqrt
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -199,15 +211,18 @@ private fun NightCard(
             Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.Bottom) {
                 Column(Modifier.weight(1f)) {
                     Text("Ночь на ${night.morning.format(dayFmt)}", style = MaterialTheme.typography.titleMedium)
+                    val sum = night.summary
                     Text(
                         "с ${night.start.format(timeFmt)} · " +
                             (if (night.clips.isEmpty()) "тихо" else phrases(night.clips.size)) +
+                            (if (sum.snoreMinutes > 0) " · храп ${minutesText(sum.snoreMinutes)}" else "") +
                             if (live) " · идёт запись" else "",
                         style = MaterialTheme.typography.bodySmall, color = Palette.muted,
                     )
                 }
                 if (!live) TextButton(onClick = onDeleteNight) { Text("Удалить ночь", color = Palette.muted) }
             }
+            if (night.minutes.size >= 2) NightTimeline(night)
             if (night.clips.isEmpty()) {
                 Text(
                     if (live) "Пока тишина." else "Ни одной фразы. Если вы точно говорили, прибавьте чувствительность.",
@@ -262,4 +277,59 @@ private fun share(ctx: Context, clip: Clip) {
         .putExtra(Intent.EXTRA_SUBJECT, "Сонник, ${clip.at.format(dayFmt)} ${clip.at.format(timeFmt)}")
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     ctx.startActivity(Intent.createChooser(send, "Отправить запись"))
+}
+
+/**
+ * The night at a glance: one bar per minute, as tall as the minute was restless,
+ * amber where you spoke, blue where you snored; dots mark the saved phrases.
+ */
+@Composable
+private fun NightTimeline(night: Night) {
+    val minutes = night.minutes
+    val total = (minutes.maxOf { it.index } + 1).coerceAtLeast(1)
+    val clipMinutes = night.clips.map { Duration.between(night.start, it.at).toMinutes().toFloat() }
+    val end = night.start.plusMinutes(total.toLong())
+    Column(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
+        Canvas(
+            Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .semantics { contentDescription = "График ночи" },
+        ) {
+            val w = size.width / total
+            val top = 10.dp.toPx()
+            val h = size.height - top
+            drawLine(Palette.line, Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 1.dp.toPx())
+            for (m in minutes) {
+                val bar = max(sqrt(m.activity.coerceIn(0.0, 1.0)).toFloat() * h, 1.5.dp.toPx())
+                val color = when {
+                    m.speechS >= 1.0 -> Palette.amber
+                    m.snoreS >= 10.0 -> Palette.snore
+                    else -> Palette.muted.copy(alpha = 0.55f)
+                }
+                drawRect(color, Offset(m.index * w, size.height - bar), Size(max(w * 0.8f, 1f), bar))
+            }
+            for (cm in clipMinutes) {
+                drawCircle(Palette.amber, radius = 3.dp.toPx(), center = Offset((cm + 0.5f) * w, 3.dp.toPx()))
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(night.start.format(timeFmt), style = MaterialTheme.typography.labelSmall, color = Palette.muted)
+            Text(end.format(timeFmt), style = MaterialTheme.typography.labelSmall, color = Palette.muted)
+        }
+        Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Legend(Palette.amber, "речь")
+            Legend(Palette.snore, "храп")
+            Legend(Palette.muted, "беспокойно")
+        }
+    }
+}
+
+@Composable
+private fun Legend(color: Color, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(color))
+        Spacer(Modifier.width(6.dp))
+        Text(label, style = MaterialTheme.typography.labelSmall, color = Palette.muted)
+    }
 }

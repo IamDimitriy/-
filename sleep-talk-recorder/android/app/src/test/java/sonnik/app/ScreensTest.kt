@@ -9,6 +9,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -22,6 +23,7 @@ import org.junit.runner.RunWith
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import sonnik.core.Episode
+import sonnik.core.Minute
 import java.time.LocalDateTime
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -102,6 +104,38 @@ class ScreensTest {
         night()
         compose.onNodeWithText("Чтобы всё работало само").assertIsDisplayed()
         compose.onNodeWithText("Доступ к микрофону").assertIsDisplayed()
+    }
+
+    @Test fun alarmSettingsAppearWhenSwitchedOn() {
+        night()
+        compose.onNodeWithText("Умный будильник").performScrollTo()
+        compose.onNodeWithText("Разбудить не позже").assertDoesNotExist()
+        compose.onAllNodes(isToggleable())[1].performScrollTo().performClick()
+        compose.onNodeWithText("Разбудить не позже").assertExists()
+        compose.onNodeWithText("30 мин").assertExists()
+        assertTrue(Prefs(ctx).alarmOn)
+    }
+
+    @Test fun recordingWithAlarmShowsTheWakeWindow() {
+        val now = System.currentTimeMillis()
+        Recorder.update {
+            RecorderState(
+                Phase.RECORDING, saveFrom = now, stopAt = now + 3_600_000, snoreMinutes = 12,
+                alarmAt = now + 3_000_000, alarmWindow = 30,
+            )
+        }
+        night()
+        compose.onNodeWithText("храп 12 мин", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Разбужу между", substring = true).assertIsDisplayed()
+    }
+
+    @Test fun nightGraphAndSnoring() {
+        val dir = Nights.dirFor(ctx, LocalDateTime.parse("2026-10-09T00:00"))
+        repeat(30) { Nights.appendMinute(dir, Minute(it, 0.0, if (it in 10..24) 25.0 else 0.0, 0.0, 0.05)) }
+        records()
+        waitForText("храп 15 мин")
+        compose.onNodeWithContentDescription("График ночи").assertIsDisplayed()
+        compose.onNodeWithText("00:30").assertIsDisplayed()
     }
 
     @Test fun recordsEmptyState() {

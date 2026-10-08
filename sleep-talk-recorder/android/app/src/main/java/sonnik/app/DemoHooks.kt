@@ -23,5 +23,15 @@ object DemoHooks {
             prefs.skippedStart = null
             Scheduler.sync(ctx)
         }
+        val alarmIn = intent.getIntExtra("demo_alarm_in", -1)
+        if (alarmIn >= 0) {
+            val prefs = Prefs(ctx)
+            val at = LocalTime.now().plusMinutes(alarmIn.toLong())
+            prefs.alarmOn = true
+            prefs.alarmMinute = at.hour * 60 + at.minute
+            prefs.alarmWindow = 0
+            prefs.rangFor = null
+            Scheduler.sync(ctx)
+        }
     }
 }

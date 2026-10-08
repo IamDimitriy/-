@@ -124,6 +124,56 @@ class RecorderServiceTest {
         assertTrue(shadowOf(service.get()).isStoppedBySelf)
     }
 
+    @Test fun snoringIsCountedMinuteByMinute() {
+        val audio = TestAudio.cat(TestAudio.noise(60.0), TestAudio.snoring(120.0), TestAudio.noise(30.0))
+        RecorderService.inputFactory = { _, _ -> FakeInput(audio) }
+        start(now = true)
+        waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
+        val night = Nights.list(ctx).single()
+        assertEquals(4, night.minutes.size, night.minutes.toString())
+        assertEquals(0.0, night.minutes[0].snoreS)
+        assertTrue(night.summary.snoreMinutes >= 1, night.minutes.toString())
+        assertTrue(night.clips.isEmpty(), "snoring is not saved as phrases")
+        assertTrue(titles().any { it.startsWith("За ночь: 0 фраз · храп") }, titles().toString())
+    }
+
+    /** Ten calm minutes, then three restless ones: the smart alarm should ring before its time. */
+    private fun nightThatGetsRestless(restless: Boolean): ShortArray {
+        val parts = ArrayList<FloatArray>()
+        repeat(10) { parts += TestAudio.noise(60.0) }
+        repeat(3) { parts += if (restless) TestAudio.restless(60.0) else TestAudio.noise(60.0) }
+        parts += TestAudio.noise(90.0)
+        return TestAudio.cat(*parts.toTypedArray())
+    }
+
+    private fun setAlarmInHalfAnHour() {
+        val prefs = Prefs(ctx)
+        val at = LocalTime.now().plusMinutes(30)
+        prefs.alarmOn = true
+        prefs.alarmMinute = at.hour * 60 + at.minute
+        prefs.alarmWindow = 45 // the window is already open
+    }
+
+    @Test fun smartAlarmRingsWhenSleepTurnsLight() {
+        setAlarmInHalfAnHour()
+        RecorderService.inputFactory = { _, _ -> FakeInput(nightThatGetsRestless(true)) }
+        start(now = true)
+        assertTrue(Recorder.state.value.alarmAt > 0)
+        waitFor("alarm") { shadowOf(nm).allNotifications.any { it.channelId == "alarm" } }
+        assertTrue(Prefs(ctx).rangFor != null)
+        waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
+    }
+
+    @Test fun smartAlarmWaitsInDeepSleep() {
+        setAlarmInHalfAnHour()
+        RecorderService.inputFactory = { _, _ -> FakeInput(nightThatGetsRestless(false)) }
+        start(now = true)
+        waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
+        assertTrue(shadowOf(nm).allNotifications.none { it.channelId == "alarm" })
+        assertEquals(null, Prefs(ctx).rangFor)
+        assertTrue(Nights.list(ctx).single().minutes.size >= 14)
+    }
+
     @Test fun busyMicIsReported() {
         RecorderService.inputFactory = { _, _ ->
             object : AudioInput {

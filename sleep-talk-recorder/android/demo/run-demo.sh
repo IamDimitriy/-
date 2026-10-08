@@ -54,7 +54,7 @@ app
 sleep 5
 shot 01-home
 
-adb shell screenrecord --time-limit 150 --bit-rate 3000000 /sdcard/demo.mp4 &
+adb shell screenrecord --time-limit 180 --bit-rate 3000000 /sdcard/demo.mp4 &
 REC=$!
 sleep 2
 log "start recording the demo night"
@@ -63,12 +63,14 @@ sleep 4
 shot 02-listening
 sleep 14
 shot 03-first-phrase
+sleep 50
+shot 03b-snoring
 adb shell cmd statusbar expand-notifications
 sleep 3
 shot 04-notification
 adb shell cmd statusbar collapse
 
-for _ in $(seq 1 60); do service_running || break; sleep 2; done
+for _ in $(seq 1 120); do service_running || break; sleep 2; done
 log "night finished: service running? $(service_running && echo yes || echo no)"
 sleep 2
 shot 05-morning
@@ -122,6 +124,25 @@ adb shell wm dismiss-keyguard
 app
 sleep 3
 shot 12-auto-recording
+# ---------- Part 3: the alarm rings over the lock screen ----------
+log "set the alarm one minute ahead, lock the phone"
+app --ez demo_stop true
+sleep 3
+app --ei demo_alarm_in 2
+sleep 3
+adb shell input keyevent KEYCODE_SLEEP
+RANG=""
+for i in $(seq 1 100); do
+  if adb shell dumpsys activity activities | grep -q "sonnik.app.AlarmActivity"; then RANG="after ~$((i * 2)) s"; break; fi
+  sleep 2
+done
+log "alarm: ${RANG:-DID NOT RING}"
+sleep 2
+shot 13-alarm
+tap_on "Выключить"
+sleep 3
+shot 14-after-alarm
+
 adb logcat -d > "$OUT/logcat.txt" 2>&1
 grep -E "Sonnik|FullScreen|FSI|$PKG" "$OUT/logcat.txt" > "$OUT/logcat-app.txt"
 log "done"
@@ -129,4 +150,5 @@ log "done"
 FAILED=0
 [ "$CLIPS" = 3 ] || { log "FAIL: expected 3 clips, got $CLIPS"; FAILED=1; }
 [ -n "$STARTED" ] || { log "FAIL: recording did not start by itself"; FAILED=1; }
+[ -n "$RANG" ] || { log "FAIL: the alarm did not ring"; FAILED=1; }
 exit $FAILED

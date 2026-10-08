@@ -7,6 +7,8 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -19,12 +21,14 @@ import java.time.format.DateTimeFormatter
 object Notifications {
     const val RECORDING_ID = 1
     const val START_ID = 2
+    const val ALARM_ID = 5
     private const val MORNING_ID = 3
     private const val PROBLEM_ID = 4
 
     private const val CH_RECORDING = "recording"
     private const val CH_START = "start"
     private const val CH_INFO = "info"
+    private const val CH_ALARM = "alarm"
     private const val TAG = "Sonnik"
 
     private val hhmm = DateTimeFormatter.ofPattern("HH:mm")
@@ -45,6 +49,21 @@ object Notifications {
                 description = "Включает запись в начале ночи"
                 setSound(null, null)
                 enableVibration(false)
+                setShowBadge(false)
+            }
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CH_ALARM, "Будильник", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Звонок будильника утром"
+                setSound(
+                    RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM),
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build(),
+                )
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 600, 400, 600, 400, 600)
                 setShowBadge(false)
             }
         )
@@ -123,12 +142,45 @@ object Notifications {
         notify(ctx, START_ID, n)
     }
 
+    /**
+     * The ringing alarm: opens [AlarmActivity] over the lock screen and plays the alarm sound
+     * over and over (FLAG_INSISTENT) until it is turned off or snoozed.
+     */
+    fun alarm(ctx: Context, smart: Boolean) {
+        val screen = PendingIntent.getActivity(
+            ctx, 40,
+            Intent(ctx, AlarmActivity::class.java).putExtra(AlarmActivity.EXTRA_SMART, smart)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        fun action(name: String, code: Int) = PendingIntent.getBroadcast(
+            ctx, code, Intent(ctx, AlarmActionReceiver::class.java).setAction(name),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val n = NotificationCompat.Builder(ctx, CH_ALARM)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("Доброе утро")
+            .setContentText(if (smart) "Будильник: сейчас сон лёгкий, хорошее время проснуться" else "Будильник")
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setFullScreenIntent(screen, true)
+            .setContentIntent(screen)
+            .setOngoing(true)
+            .setTimeoutAfter(10 * 60 * 1000L)
+            .addAction(0, "Выключить", action(AlarmActionReceiver.ACTION_DISMISS, 41))
+            .addAction(0, "Ещё 10 минут", action(AlarmActionReceiver.ACTION_SNOOZE, 42))
+            .build()
+        n.flags = n.flags or android.app.Notification.FLAG_INSISTENT
+        notify(ctx, ALARM_ID, n)
+    }
+
     fun cancelStartPrompt(ctx: Context) = NotificationManagerCompat.from(ctx).cancel(START_ID)
 
-    fun morning(ctx: Context, clips: Int) {
+    fun morning(ctx: Context, clips: Int, snoreMinutes: Int = 0) {
+        val snore = if (snoreMinutes > 0) " · храп ${minutesText(snoreMinutes)}" else ""
         val n = NotificationCompat.Builder(ctx, CH_INFO)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("За ночь: ${phrases(clips)}")
+            .setContentTitle("За ночь: ${phrases(clips)}$snore")
             .setContentText("Нажмите, чтобы послушать")
             .setContentIntent(openApp(ctx, records = true))
             .setAutoCancel(true)
@@ -157,6 +209,13 @@ object Notifications {
 }
 
 fun phrases(n: Int): String = "$n ${plural(n, "фраза", "фразы", "фраз")}"
+
+/** "45 мин", "1 ч 20 мин". */
+fun minutesText(m: Int): String = when {
+    m < 60 -> "$m мин"
+    m % 60 == 0 -> "${m / 60} ч"
+    else -> "${m / 60} ч ${m % 60} мин"
+}
 
 fun plural(n: Int, one: String, few: String, many: String): String {
     val m10 = n % 10

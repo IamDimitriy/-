@@ -39,6 +39,21 @@ data class DetectorConfig(
     val minFloorDb: Double = -70.0,
 )
 
+/** What the detector measured in one frame, for night statistics (snoring, restlessness). */
+data class FrameInfo(
+    /** Frame start from the beginning of the stream, seconds. */
+    val timeS: Double,
+    val durationS: Double,
+    val db: Double,
+    val floorDb: Double,
+    /** Share of energy in the speech band. */
+    val speechRatio: Double,
+    /** Share of energy below 400 Hz, where snoring lives. */
+    val lowRatio: Double,
+    /** Counted as speech by the detector. */
+    val speech: Boolean,
+)
+
 class Episode(
     /** Offset of the first sample from the start of the stream, seconds. */
     val startS: Double,
@@ -48,30 +63,6 @@ class Episode(
     val activeS: Double,
 ) {
     val durationS: Double get() = audio.size.toDouble() / sampleRate
-}
-
-private class Biquad(lowpass: Boolean, f0: Double, sr: Int) {
-    private val b0: Double; private val b1: Double; private val b2: Double
-    private val a1: Double; private val a2: Double
-    private var z1 = 0.0; private var z2 = 0.0
-
-    init {
-        val w = 2 * PI * min(f0, sr * 0.45) / sr
-        val c = cos(w)
-        val alpha = sin(w) / (2 * sqrt(0.5))
-        val a0 = 1 + alpha
-        val nb0: Double; val nb1: Double
-        if (lowpass) { nb0 = (1 - c) / 2; nb1 = 1 - c } else { nb0 = (1 + c) / 2; nb1 = -(1 + c) }
-        b0 = nb0 / a0; b1 = nb1 / a0; b2 = nb0 / a0
-        a1 = -2 * c / a0; a2 = (1 - alpha) / a0
-    }
-
-    fun next(x: Double): Double {
-        val y = b0 * x + z1
-        z1 = b1 * x - a1 * y + z2
-        z2 = b2 * x - a2 * y
-        return y
-    }
 }
 
 class Detector(val sampleRate: Int, val cfg: DetectorConfig = DetectorConfig()) {
@@ -86,11 +77,11 @@ class Detector(val sampleRate: Int, val cfg: DetectorConfig = DetectorConfig()) 
     private var historyPos = 0
     private val calibFrames = max(1, (cfg.calibrationS * fps).roundToInt())
 
-    private val hp60 = Biquad(false, 60.0, sampleRate)
-    private val bandHp1 = Biquad(false, cfg.bandLowHz, sampleRate)
-    private val bandHp2 = Biquad(false, cfg.bandLowHz, sampleRate)
-    private val bandLp1 = Biquad(true, cfg.bandHighHz, sampleRate)
-    private val bandLp2 = Biquad(true, cfg.bandHighHz, sampleRate)
+    // Spectrum of each frame (Hann window, zero-padded FFT), the same measure as the Python detector.
+    private val spectrum = Spectrum(frameLen, sampleRate)
+
+    /** Called for every frame once the room's silence is known. */
+    var onFrame: ((FrameInfo) -> Unit)? = null
 
     private val calib = ArrayList<Double>()
     /** Noise floor in dBFS, or null while calibrating. */
@@ -139,13 +130,12 @@ class Detector(val sampleRate: Int, val cfg: DetectorConfig = DetectorConfig()) 
 
     private fun step(frame: FloatArray): Episode? {
         val idx = frameIdx++
-        var sum = 0.0; var all = 0.0; var band = 0.0
-        for (s in frame) {
-            val x = s.toDouble()
-            sum += x * x
-            val h = hp60.next(x); all += h * h
-            val b = bandLp2.next(bandLp1.next(bandHp2.next(bandHp1.next(x)))); band += b * b
-        }
+        var sum = 0.0
+        for (s in frame) sum += s.toDouble() * s
+        spectrum.analyse(frame)
+        val all = spectrum.energy(60.0, Double.MAX_VALUE)
+        val band = spectrum.energy(cfg.bandLowHz, cfg.bandHighHz)
+        val low = spectrum.energy(60.0, LOW_BAND_HZ)
         val db = 20 * log10(max(sqrt(sum / frame.size), 1e-10))
         val ratio = if (all > 0) band / all else 0.0
         lastDb = db
@@ -165,6 +155,13 @@ class Detector(val sampleRate: Int, val cfg: DetectorConfig = DetectorConfig()) 
         val active = db >= floor + cfg.thresholdDb && (cfg.minSpeechRatio <= 0 || ratio >= cfg.minSpeechRatio)
         remember(db)
         if (idx % FLOOR_EVERY == 0L) updateFloor()
+        onFrame?.invoke(
+            FrameInfo(
+                timeS = idx * frameLen.toDouble() / sampleRate, durationS = frameLen.toDouble() / sampleRate,
+                db = db, floorDb = floor, speechRatio = ratio,
+                lowRatio = if (all > 0) low / all else 0.0, speech = active,
+            )
+        )
 
         val c = cur
         if (c == null) {
@@ -226,4 +223,64 @@ class Detector(val sampleRate: Int, val cfg: DetectorConfig = DetectorConfig()) 
     }
 }
 
+private const val LOW_BAND_HZ = 400.0
 private const val FLOOR_EVERY = 10L // frames between floor updates (~0.3 s)
+
+/** Power spectrum of one frame; energy() sums it over a frequency range. */
+private class Spectrum(private val frameLen: Int, private val sampleRate: Int) {
+    private val n = Integer.highestOneBit(frameLen - 1).shl(1).coerceAtLeast(2)
+    private val window = DoubleArray(frameLen) { 0.5 - 0.5 * cos(2 * PI * it / (frameLen - 1).coerceAtLeast(1)) }
+    private val re = DoubleArray(n)
+    private val im = DoubleArray(n)
+    private val power = DoubleArray(n / 2 + 1)
+    private val cosT = DoubleArray(n / 2) { cos(2 * PI * it / n) }
+    private val sinT = DoubleArray(n / 2) { -sin(2 * PI * it / n) }
+    private val hzPerBin = sampleRate.toDouble() / n
+
+    fun analyse(frame: FloatArray) {
+        for (i in 0 until n) {
+            re[i] = if (i < frameLen) frame[i] * window[i] else 0.0
+            im[i] = 0.0
+        }
+        fft()
+        for (k in power.indices) power[k] = re[k] * re[k] + im[k] * im[k]
+    }
+
+    /** Energy in (fromHz, toHz]. */
+    fun energy(fromHz: Double, toHz: Double): Double {
+        var e = 0.0
+        for (k in power.indices) {
+            val f = k * hzPerBin
+            if (f > fromHz && f <= toHz) e += power[k]
+        }
+        return e
+    }
+
+    private fun fft() {
+        var j = 0
+        for (i in 1 until n) {
+            var bit = n shr 1
+            while (j and bit != 0) { j = j xor bit; bit = bit shr 1 }
+            j = j xor bit
+            if (i < j) {
+                val tr = re[i]; re[i] = re[j]; re[j] = tr
+                val ti = im[i]; im[i] = im[j]; im[j] = ti
+            }
+        }
+        var len = 2
+        while (len <= n) {
+            val step = n / len
+            for (start in 0 until n step len) {
+                for (k in 0 until len / 2) {
+                    val c = cosT[k * step]; val s = sinT[k * step]
+                    val a = start + k; val b = a + len / 2
+                    val xr = re[b] * c - im[b] * s
+                    val xi = re[b] * s + im[b] * c
+                    re[b] = re[a] - xr; im[b] = im[a] - xi
+                    re[a] += xr; im[a] += xi
+                }
+            }
+            len = len shl 1
+        }
+    }
+}

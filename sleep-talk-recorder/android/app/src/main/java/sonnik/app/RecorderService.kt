@@ -17,8 +17,12 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import sonnik.core.Detector
 import sonnik.core.DetectorConfig
+import sonnik.core.ActivityMeter
 import sonnik.core.Episode
+import sonnik.core.Minute
 import sonnik.core.NightPlan
+import sonnik.core.NightSummary
+import sonnik.core.SmartWake
 import java.io.File
 import java.time.Instant
 import java.time.LocalDateTime
@@ -52,7 +56,13 @@ class RecorderService : Service() {
     private fun begin(intent: Intent?) {
         val prefs = Prefs(this)
         val zone = ZoneId.systemDefault()
-        val plan = NightPlan.make(prefs.window, LocalDateTime.now(), intent?.getBooleanExtra(EXTRA_NOW, false) ?: false)
+        val nowDt = LocalDateTime.now()
+        val basePlan = NightPlan.make(prefs.window, nowDt, intent?.getBooleanExtra(EXTRA_NOW, false) ?: false)
+        // With the alarm on, keep listening until it rings (the smart alarm needs the sounds).
+        val alarmAt = Alarm.next(this, nowDt)
+        val plan = if (alarmAt != null && alarmAt.plusMinutes(30) > basePlan.stopAt) {
+            basePlan.copy(stopAt = alarmAt.plusMinutes(30))
+        } else basePlan
         val saveFrom = plan.saveFrom.atZone(zone).toInstant().toEpochMilli()
         val stopAt = plan.stopAt.atZone(zone).toInstant().toEpochMilli()
 
@@ -66,6 +76,8 @@ class RecorderService : Service() {
                 phase = if (System.currentTimeMillis() >= saveFrom) Phase.RECORDING else Phase.WAITING,
                 saveFrom = saveFrom,
                 stopAt = stopAt,
+                alarmAt = alarmAt?.let(Alarm::epochMs) ?: 0,
+                alarmWindow = if (alarmAt != null) prefs.alarmWindow else 0,
             )
         }
         val type = if (Build.VERSION.SDK_INT >= 30) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
@@ -97,7 +109,8 @@ class RecorderService : Service() {
             minSpeechRatio = if (prefs.anySound) 0.0 else 0.45,
         )
         running = true
-        worker = Thread({ listen(input, config, plan) }, "sonnik-mic").also { it.start() }
+        val wake = alarmAt?.let { WakePlan(it, prefs.alarmWindow) }
+        worker = Thread({ listen(input, config, plan, wake) }, "sonnik-mic").also { it.start() }
     }
 
     /**
@@ -113,7 +126,10 @@ class RecorderService : Service() {
         finishSession(0)
     }
 
-    private fun listen(input: AudioInput, config: DetectorConfig, plan: NightPlan) {
+    /** Wake-up time and how many minutes earlier the smart alarm may ring. */
+    private data class WakePlan(val at: LocalDateTime, val windowMin: Int)
+
+    private fun listen(input: AudioInput, config: DetectorConfig, plan: NightPlan, wake: WakePlan?) {
         val zone = ZoneId.systemDefault()
         val rate = input.sampleRate
         val detector = Detector(rate, config)
@@ -125,6 +141,30 @@ class RecorderService : Service() {
         var lastUi = 0L
         var lastPhase = Recorder.state.value.phase
         val streamStart = System.currentTimeMillis()
+        var samples = 0L
+        // Clock of the audio itself: equals the wall clock for the mic, runs faster for test input.
+        fun audioNow() = maxOf(System.currentTimeMillis(), streamStart + samples * 1000 / rate)
+
+        // Minute-by-minute statistics from the moment the night starts.
+        val minutes = ArrayList<Minute>()
+        val meter = ActivityMeter(thresholdDb = config.thresholdDb, startS = maxOf(0.0, (saveFrom - streamStart) / 1000.0))
+        var rang = false
+        fun minuteDone(m: Minute) {
+            minutes += m
+            val dir = nightDir ?: Nights.dirFor(this, plan.saveFrom).also { nightDir = it }
+            runCatching { Nights.appendMinute(dir, m) }.onFailure { Log.w(TAG, "Activity write failed", it) }
+            val snore = NightSummary.of(minutes).snoreMinutes
+            Recorder.update { it.copy(snoreMinutes = snore) }
+            if (wake != null && !rang) {
+                val now = LocalDateTime.ofInstant(Instant.ofEpochMilli(audioNow()), zone)
+                if (SmartWake.shouldWake(now, wake.at, wake.windowMin, minutes)) {
+                    rang = true
+                    val smart = now.isBefore(wake.at)
+                    main.post { Alarm.ring(this, wake.at, smart) }
+                }
+            }
+        }
+        detector.onFrame = { f -> meter.add(f)?.let(::minuteDone) }
 
         fun keep(ep: Episode) {
             val at = streamStart + (ep.startS * 1000).toLong()
@@ -144,9 +184,12 @@ class RecorderService : Service() {
             while (running) {
                 val n = input.read(buf)
                 if (n < 0) break // file input ended
-                if (n > 0) detector.process(buf, n).forEach(::keep)
+                if (n > 0) {
+                    samples += n
+                    detector.process(buf, n).forEach(::keep)
+                }
 
-                val now = System.currentTimeMillis()
+                val now = audioNow()
                 if (now >= stopAt) break
                 if (now - lastUi >= 500) {
                     lastUi = now
@@ -163,24 +206,26 @@ class RecorderService : Service() {
                 }
             }
             detector.flush().forEach(::keep)
+            meter.flush()?.let(::minuteDone)
         } catch (e: Exception) {
             Log.w(TAG, "Recording failed", e)
         } finally {
             input.close()
         }
         val total = clips
-        Log.i(TAG, "Recording session ended, clips kept: $total")
-        main.post { finishSession(total) }
+        val snore = NightSummary.of(minutes).snoreMinutes
+        Log.i(TAG, "Recording session ended, clips kept: $total, snoring: $snore min, minutes: ${minutes.size}")
+        main.post { finishSession(total, snore) }
     }
 
-    private fun finishSession(clips: Int) {
+    private fun finishSession(clips: Int, snoreMinutes: Int = 0) {
         running = false
         worker = null
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
         Recorder.reset()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        if (clips > 0) Notifications.morning(this, clips)
+        if (clips > 0 || snoreMinutes > 0) Notifications.morning(this, clips, snoreMinutes)
         Scheduler.sync(this)
         stopSelf()
     }

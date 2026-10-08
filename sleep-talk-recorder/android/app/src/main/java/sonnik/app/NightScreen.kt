@@ -27,6 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -74,7 +75,10 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
     var end by remember { mutableIntStateOf(prefs.endMinute) }
     var sensitivity by remember { mutableFloatStateOf((SENS_SUM - prefs.threshold).toFloat()) }
     var anySound by remember { mutableStateOf(prefs.anySound) }
-    var setup by remember { mutableStateOf(Setup.items(ctx, auto)) }
+    var alarmOn by remember { mutableStateOf(prefs.alarmOn) }
+    var alarmMinute by remember { mutableIntStateOf(prefs.alarmMinute) }
+    var alarmWindow by remember { mutableIntStateOf(prefs.alarmWindow) }
+    var setup by remember { mutableStateOf(Setup.items(ctx, auto || alarmOn)) }
     var skipped by remember { mutableStateOf(Scheduler.isTonightSkipped(ctx)) }
 
     LifecycleResumeEffect(Unit) {
@@ -83,9 +87,12 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
         start = prefs.startMinute
         end = prefs.endMinute
         anySound = prefs.anySound
+        alarmOn = prefs.alarmOn
+        alarmMinute = prefs.alarmMinute
+        alarmWindow = prefs.alarmWindow
         sensitivity = (SENS_SUM - prefs.threshold).toFloat()
         skipped = Scheduler.isTonightSkipped(ctx)
-        setup = Setup.items(ctx, prefs.autoStart)
+        setup = Setup.items(ctx, prefs.autoStart || prefs.alarmOn)
         onPauseOrDispose { }
     }
     val now by produceState(LocalDateTime.now()) {
@@ -102,7 +109,7 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
         }
         if (granted && startAfterGrant) Recorder.start(ctx, now = true)
         startAfterGrant = false
-        setup = Setup.items(ctx, auto)
+        setup = Setup.items(ctx, auto || alarmOn)
     }
 
     fun fix(item: SetupItem) {
@@ -149,7 +156,7 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
         Section("Расписание") {
             SettingRow("Включать само каждую ночь", "Телефон можно заблокировать и положить экраном вниз") {
                 Switch(checked = auto, onCheckedChange = {
-                    auto = it; prefs.autoStart = it; Scheduler.sync(ctx); setup = Setup.items(ctx, it)
+                    auto = it; prefs.autoStart = it; Scheduler.sync(ctx); setup = Setup.items(ctx, it || alarmOn)
                     skipped = Scheduler.isTonightSkipped(ctx)
                 })
             }
@@ -161,6 +168,39 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
                 TimeButton("Конец", end, Modifier.weight(1f)) {
                     end = it; prefs.endMinute = it; Scheduler.sync(ctx)
                 }
+            }
+        }
+
+        Section("Будильник") {
+            SettingRow("Умный будильник", "Разбудит, когда сон станет лёгким, но не позже назначенного времени") {
+                Switch(checked = alarmOn, onCheckedChange = {
+                    alarmOn = it; prefs.alarmOn = it; Scheduler.sync(ctx); setup = Setup.items(ctx, auto || it)
+                })
+            }
+            if (alarmOn) {
+                HorizontalDivider()
+                Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TimeButton("Разбудить не позже", alarmMinute, Modifier.weight(1f)) {
+                        alarmMinute = it; prefs.alarmMinute = it; prefs.rangFor = null; Scheduler.sync(ctx)
+                    }
+                }
+                Text("Можно раньше на", style = MaterialTheme.typography.bodySmall, color = Palette.muted)
+                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(0 to "нет", 15 to "15 мин", 30 to "30 мин", 45 to "45 мин").forEach { (w, label) ->
+                        FilterChip(
+                            selected = alarmWindow == w,
+                            onClick = { alarmWindow = w; prefs.alarmWindow = w },
+                            label = { Text(label) },
+                        )
+                    }
+                }
+                Text(
+                    "Лёгкий сон узнаю по звукам: вы ворочаетесь или говорите. Это примерная оценка. " +
+                        "Раньше времени разбужу, только если ночью шла запись; иначе прозвоню ровно в " +
+                        "${Prefs.format(alarmMinute)}.",
+                    style = MaterialTheme.typography.bodySmall, color = Palette.muted,
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
             }
         }
 
@@ -225,11 +265,21 @@ private fun StatusCard(
                         Text("Слушаю", style = MaterialTheme.typography.headlineSmall)
                     }
                     Text(
-                        "До ${Notifications.time(state.stopAt)} · " +
-                            if (state.clips == 0) "фраз пока нет"
-                            else "${phrases(state.clips)}, последняя в ${Notifications.time(state.lastClipAt)}",
+                        (if (state.alarmAt > 0) "" else "До ${Notifications.time(state.stopAt)} · ") +
+                            (if (state.clips == 0) "фраз пока нет"
+                            else "${phrases(state.clips)}, последняя в ${Notifications.time(state.lastClipAt)}") +
+                            (if (state.snoreMinutes > 0) " · храп ${minutesText(state.snoreMinutes)}" else ""),
                         color = Palette.muted,
                     )
+                    if (state.alarmAt > 0) {
+                        Text(
+                            if (state.alarmWindow > 0) {
+                                "Разбужу между ${Notifications.time(state.alarmAt - state.alarmWindow * 60_000L)} " +
+                                    "и ${Notifications.time(state.alarmAt)}"
+                            } else "Будильник в ${Notifications.time(state.alarmAt)}",
+                            color = Palette.amber,
+                        )
+                    }
                     LinearProgressIndicator(
                         progress = { state.level },
                         modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),

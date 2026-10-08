@@ -19,6 +19,10 @@ data class RecorderState(
     /** 0..1, how loud the room is relative to the trigger level. */
     val level: Float = 0f,
     val calibrated: Boolean = false,
+    val snoreMinutes: Int = 0,
+    /** When the alarm will ring at the latest (epoch ms), or 0 when it is off. */
+    val alarmAt: Long = 0,
+    val alarmWindow: Int = 0,
 )
 
 /** Process-wide view of the recording service, observed by the UI. */

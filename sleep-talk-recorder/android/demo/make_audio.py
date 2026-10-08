@@ -25,8 +25,9 @@ def room(seconds, level=0.003):
 
 
 def snore(seconds, level=0.25):
+    """A low rumble on every breath: 1.5 s of sound every 4 s."""
     t = np.arange(int(RATE * seconds)) / RATE
-    breath = np.clip(np.sin(2 * np.pi * 0.35 * t), 0, None)  # inhale bursts
+    breath = ((t % 4.0) < 1.5) * np.sin(np.pi * np.clip((t % 4.0) / 1.5, 0, 1))
     return (level * breath * np.sin(2 * np.pi * 70 * t) * (0.6 + 0.4 * np.sin(2 * np.pi * 28 * t))).astype(np.float32)
 
 
@@ -50,9 +51,9 @@ def main(out):
     parts = [
         room(6),
         over_room(say(PHRASES[0])), room(9),
-        over_room(snore(6)), room(6),
+        over_room(snore(60)), room(6),
         over_room(say(PHRASES[1])), room(9),
-        over_room(say(PHRASES[2])), room(7),
+        over_room(say(PHRASES[2])), room(40),
     ]
     audio = np.clip(np.concatenate(parts), -1, 1)
     with wave.open(out, "wb") as w:

@@ -44,7 +44,22 @@ object Scheduler {
         return Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms()
     }
 
+    /** An exact alarm the system shows as the next alarm (it may wake the phone and open screens). */
+    fun setAlarmClock(ctx: Context, atMs: Long, pi: PendingIntent) {
+        val am = ctx.getSystemService(AlarmManager::class.java)
+        if (canExact(ctx)) {
+            val show = PendingIntent.getActivity(
+                ctx, 4, Intent(ctx, MainActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            am.setAlarmClock(AlarmManager.AlarmClockInfo(atMs, show), pi)
+        } else {
+            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMs, pi)
+        }
+    }
+
     fun sync(ctx: Context) {
+        Alarm.syncBackup(ctx)
         val am = ctx.getSystemService(AlarmManager::class.java)
         val pi = alarmIntent(ctx)
         am.cancel(pi)

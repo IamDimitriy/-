@@ -35,6 +35,27 @@ class Prefs(context: Context) {
         get() = sp.getString("skip", null)?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }
         set(v) = sp.edit().putString("skip", v?.toString()).apply()
 
+    var alarmOn: Boolean
+        get() = sp.getBoolean("alarm", false)
+        set(v) = sp.edit().putBoolean("alarm", v).apply()
+
+    /** Latest wake-up time, minutes after midnight. */
+    var alarmMinute: Int
+        get() = sp.getInt("alarmAt", 7 * 60)
+        set(v) = sp.edit().putInt("alarmAt", v).apply()
+
+    /** How many minutes before [alarmMinute] the smart alarm may ring in light sleep (0 = plain alarm). */
+    var alarmWindow: Int
+        get() = sp.getInt("alarmWindow", 30)
+        set(v) = sp.edit().putInt("alarmWindow", v).apply()
+
+    /** The alarm time that already rang (ISO date-time), so the backup alarm does not ring twice. */
+    var rangFor: LocalDateTime?
+        get() = sp.getString("rangFor", null)?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }
+        set(v) = sp.edit().putString("rangFor", v?.toString()).apply()
+
+    val alarmTime: LocalTime get() = minuteToTime(alarmMinute)
+
     val window: NightWindow
         get() = NightWindow(minuteToTime(startMinute), minuteToTime(endMinute))
 

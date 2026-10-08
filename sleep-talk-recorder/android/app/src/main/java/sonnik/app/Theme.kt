@@ -22,6 +22,7 @@ object Palette {
     val amberInk = Color(0xFF1B1309)
     val danger = Color(0xFFE57A6E)
     val ok = Color(0xFF8FBF8A)
+    val snore = Color(0xFF7F9CF5)
 }
 
 @Composable
