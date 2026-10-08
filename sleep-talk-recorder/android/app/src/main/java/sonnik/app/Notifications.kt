@@ -144,7 +144,8 @@ object Notifications {
 
     /**
      * The ringing alarm: opens [AlarmActivity] over the lock screen and plays the alarm sound
-     * over and over (FLAG_INSISTENT) until it is turned off or snoozed.
+     * over and over (FLAG_INSISTENT) until it is turned off or snoozed, for at most 10 minutes;
+     * then [Alarm] rings it again if nobody reacted.
      */
     fun alarm(ctx: Context, smart: Boolean) {
         val screen = PendingIntent.getActivity(

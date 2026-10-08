@@ -23,6 +23,7 @@ import org.robolectric.annotation.Config
 import sonnik.core.SmartWake
 import java.time.LocalDateTime
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -107,6 +108,40 @@ class AlarmTest {
         )
         AlarmRingReceiver().onReceive(ctx, Intent().putExtra(AlarmRingReceiver.EXTRA_SNOOZE, true))
         assertNotNull(alarmNotification())
+    }
+
+    /** Alarm on, with no other alarm (night start, backup) anywhere near the next 10 minutes. */
+    private fun alarmHoursAway() {
+        prefs.alarmOn = true
+        prefs.autoStart = false
+        prefs.alarmMinute = (LocalDateTime.now().hour + 3) % 24 * 60
+    }
+
+    private fun ringsAgainIn10Min(from: Long) =
+        shadowOf(am).scheduledAlarms.any { it.triggerAtMs in from + 9 * 60_000..from + 11 * 60_000 }
+
+    @Test fun ringsAgainUntilTurnedOff() {
+        alarmHoursAway()
+        val before = System.currentTimeMillis()
+        Alarm.ring(ctx, LocalDateTime.now(), smart = true)
+        assertTrue(ringsAgainIn10Min(before), "the ringing stops after 10 minutes, so it rings again")
+        AlarmActionReceiver().onReceive(ctx, Intent(AlarmActionReceiver.ACTION_DISMISS))
+        assertFalse(ringsAgainIn10Min(before), "turned off: no repeat")
+        assertNull(alarmNotification())
+    }
+
+    @Test fun ringsAtMostThreeTimesInARow() {
+        alarmHoursAway()
+        val before = System.currentTimeMillis()
+        val again = Intent().putExtra(AlarmRingReceiver.EXTRA_SNOOZE, true)
+        Alarm.ring(ctx, LocalDateTime.now(), smart = false)
+        am.cancel(Alarm.snoozeIntent(ctx)) // the repeat went off
+        AlarmRingReceiver().onReceive(ctx, again)
+        assertTrue(ringsAgainIn10Min(before), "second ring, one more to come")
+        am.cancel(Alarm.snoozeIntent(ctx))
+        AlarmRingReceiver().onReceive(ctx, again)
+        assertNotNull(alarmNotification())
+        assertFalse(ringsAgainIn10Min(before), "the third ring is the last")
     }
 }
 

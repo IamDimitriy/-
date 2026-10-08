@@ -58,7 +58,26 @@ class ScreensTest {
         Prefs(ctx).endMinute = ((LocalDateTime.now().hour + 4) % 24) * 60
         night()
         compose.onNodeWithText("Запись начнётся сама", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("Начать сейчас").assertIsDisplayed()
+        compose.onNodeWithText("Начать сейчас").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test fun idleScreenWarnsWithoutTheMicrophone() {
+        Prefs(ctx).startMinute = (LocalDateTime.now().hour + 3) % 24 * 60
+        Prefs(ctx).endMinute = ((LocalDateTime.now().hour + 4) % 24) * 60
+        shadowOf(ctx).denyPermissions(Manifest.permission.RECORD_AUDIO)
+        night()
+        // Still says when, but not as if everything were ready.
+        compose.onNodeWithText("Запись начнётся сама", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Без доступа к микрофону запись не включится", substring = true).assertExists()
+    }
+
+    @Test fun idleScreenWarnsWithoutNotifications() {
+        Prefs(ctx).startMinute = (LocalDateTime.now().hour + 3) % 24 * 60
+        Prefs(ctx).endMinute = ((LocalDateTime.now().hour + 4) % 24) * 60
+        shadowOf(ctx).grantPermissions(Manifest.permission.RECORD_AUDIO)
+        night()
+        compose.onNodeWithText("Без уведомлений запись ночью не включится", substring = true).assertExists()
+        compose.onNodeWithText("Без доступа к микрофону", substring = true).assertDoesNotExist()
     }
 
     @Test fun switchingAutoStartOff() {
@@ -75,10 +94,10 @@ class ScreensTest {
         Prefs(ctx).startMinute = (LocalDateTime.now().hour + 3) % 24 * 60
         Prefs(ctx).endMinute = ((LocalDateTime.now().hour + 4) % 24) * 60
         night()
-        compose.onNodeWithText("Пропустить ночь").performClick()
+        compose.onNodeWithText("Пропустить ночь").performScrollTo().performClick()
         compose.onNodeWithText("Эту ночь пропускаю").assertIsDisplayed()
         assertTrue(Scheduler.isTonightSkipped(ctx))
-        compose.onNodeWithText("Всё-таки записать").performClick()
+        compose.onNodeWithText("Всё-таки записать").performScrollTo().performClick()
         compose.onNodeWithText("Запись начнётся сама", substring = true).assertIsDisplayed()
         assertFalse(Scheduler.isTonightSkipped(ctx))
     }
@@ -104,8 +123,9 @@ class ScreensTest {
     @Test fun setupListAsksForTheMicrophone() {
         shadowOf(ctx).denyPermissions(Manifest.permission.RECORD_AUDIO)
         night()
-        compose.onNodeWithText("Чтобы всё работало само").assertIsDisplayed()
-        compose.onNodeWithText("Доступ к микрофону").assertIsDisplayed()
+        // Below the status card, which grows with the warning about the microphone.
+        compose.onNodeWithText("Чтобы всё работало само").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Доступ к микрофону").performScrollTo().assertIsDisplayed()
     }
 
     @Test fun alarmSettingsAppearWhenSwitchedOn() {

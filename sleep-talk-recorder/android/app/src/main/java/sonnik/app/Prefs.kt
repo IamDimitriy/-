@@ -45,6 +45,11 @@ class Prefs(context: Context) {
         get() = sp.getString("rangFor", null)?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }
         set(v) = sp.edit().putString("rangFor", v?.toString()).apply()
 
+    /** How many times the alarm has rung in a row with nobody turning it off or snoozing it. */
+    var alarmRings: Int
+        get() = sp.getInt("alarmRings", 0)
+        set(v) = sp.edit().putInt("alarmRings", v).apply()
+
     val alarmTime: LocalTime get() = minuteToTime(alarmMinute)
 
     val window: NightWindow

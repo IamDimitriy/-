@@ -13,6 +13,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -58,6 +60,7 @@ import sonnik.core.NightWindow
 import java.time.Duration
 import java.time.LocalDateTime
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
     val ctx = LocalContext.current
@@ -127,8 +130,17 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
     ) {
         Text("Сонник", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
 
+        // Without these nothing switches on at night, so the status must not just promise it.
+        val warning = when {
+            setup.any { it.id == "mic" && !it.ok } ->
+                "Без доступа к микрофону запись не включится — разрешите его ниже."
+            setup.any { it.id == "notif" && !it.ok } -> // the item exists on Android 13+ only
+                "Без уведомлений запись ночью не включится — разрешите их ниже."
+            else -> null
+        }
         StatusCard(
             state = state, auto = auto, skipped = skipped, startMinute = start, endMinute = end, now = now,
+            warning = warning,
             onStartNow = ::startNow,
             onStop = { Recorder.stop(ctx) },
             onCancelWaiting = {
@@ -175,7 +187,11 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
                     }
                 }
                 Text("Можно раньше на", style = MaterialTheme.typography.bodySmall, color = Palette.muted)
-                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Wraps with large text instead of squeezing "45 мин" into a column of letters.
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     listOf(0 to "нет", 15 to "15 мин", 30 to "30 мин", 45 to "45 мин").forEach { (w, label) ->
                         FilterChip(
                             selected = alarmWindow == w,
@@ -203,6 +219,7 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StatusCard(
     state: RecorderState,
@@ -211,6 +228,8 @@ private fun StatusCard(
     startMinute: Int,
     endMinute: Int,
     now: LocalDateTime,
+    /** Why the automatic start will not work, or null. */
+    warning: String?,
     onStartNow: () -> Unit,
     onStop: () -> Unit,
     onCancelWaiting: () -> Unit,
@@ -283,16 +302,26 @@ private fun StatusCard(
                                     "в ${Prefs.format(startMinute)}.",
                                 color = Palette.muted,
                             )
+                            if (warning != null) Text(warning, color = Palette.danger)
                             OutlinedButton(onClick = { onSkip(false) }) { Text("Всё-таки записать") }
                         }
                         auto -> {
-                            Text("Запись начнётся сама в ${Prefs.format(startMinute)}", style = MaterialTheme.typography.headlineSmall)
+                            // The time on its own line: in one headline it wrapped badly on phones.
+                            Column {
+                                Text("Запись начнётся сама", style = MaterialTheme.typography.titleMedium, color = Palette.muted)
+                                Text(
+                                    Prefs.format(startMinute),
+                                    fontSize = 44.sp, lineHeight = 52.sp, fontWeight = FontWeight.Light, color = Palette.text,
+                                )
+                            }
                             Text(
                                 "${until(now, next)} · до ${Prefs.format(endMinute)}. " +
                                     "Поставьте телефон на зарядку рядом с кроватью и спите.",
                                 color = Palette.muted,
                             )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (warning != null) Text(warning, color = Palette.danger)
+                            // Wraps on a narrow screen or with large text.
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedButton(onClick = onStartNow) { Text("Начать сейчас") }
                                 TextButton(onClick = { onSkip(true) }) { Text("Пропустить ночь") }
                             }
