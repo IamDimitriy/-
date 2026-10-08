@@ -86,7 +86,8 @@ sleep 6
 wait $REC
 adb pull /sdcard/demo.mp4 "$OUT/demo.mp4" >> "$LOG" 2>&1
 adb shell run-as $PKG ls -lR files/nights >> "$LOG" 2>&1
-CLIPS=$(adb shell run-as $PKG sh -c 'ls files/nights/*/*.wav 2>/dev/null' | grep -c wav)
+# adb joins its arguments with spaces, so the remote command is quoted as one string.
+CLIPS=$(adb shell "run-as $PKG sh -c 'ls files/nights/*/*.wav'" 2>/dev/null | grep -c '\.wav')
 log "clips kept from the demo night: $CLIPS (expected 3 phrases, snoring ignored)"
 
 # ---------- Part 2: automatic start with the screen off ----------

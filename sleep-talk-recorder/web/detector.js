@@ -15,7 +15,9 @@
     hangoverS: 2.5,
     minActiveS: 0.4,
     maxEventS: 120,
-    floorTauS: 20,
+    // Room silence = 20th percentile of frame levels over 30 s: a snore cannot mask the next words.
+    floorWindowS: 30,
+    floorPercentile: 0.2,
     calibrationS: 3,
     minFloorDb: -70,
   };
@@ -49,7 +51,8 @@
       this.hangFrames = Math.max(1, Math.round(c.hangoverS * fps));
       this.minActive = Math.max(1, Math.round(c.minActiveS * fps));
       this.maxFrames = Math.max(1, Math.round(c.maxEventS * fps));
-      this.alpha = 1 / Math.max(1, c.floorTauS * fps);
+      this.historyMax = Math.max(1, Math.round(c.floorWindowS * fps));
+      this.history = [];
       this.calibFrames = Math.max(1, Math.round(c.calibrationS * fps));
       this.fps = fps;
 
@@ -114,6 +117,7 @@
 
       if (this.floor === null) {
         this.calib.push(db);
+        this._remember(db);
         this._pushPreroll(frame);
         if (this.calib.length >= this.calibFrames) {
           const s = this.calib.slice().sort((a, b) => a - b);
@@ -124,13 +128,12 @@
 
       const active = db >= this.floor + c.thresholdDb &&
         (c.minSpeechRatio <= 0 || ratio >= c.minSpeechRatio);
+      this._remember(db);
+      if (idx % 10 === 0) this._updateFloor();
 
       if (!this.cur) {
         this.recent.push(active);
         if (this.recent.length > c.startWindow) this.recent.shift();
-        if (!active) {
-          this.floor = Math.max(this.floor + this.alpha * (db - this.floor), c.minFloorDb);
-        }
         const count = this.recent.reduce((n, a) => n + (a ? 1 : 0), 0);
         if (count >= c.startActive) {
           this.cur = {
@@ -154,6 +157,18 @@
         return this._finish();
       }
       return null;
+    }
+
+    _remember(db) {
+      this.history.push(db);
+      if (this.history.length > this.historyMax) this.history.shift();
+    }
+
+    _updateFloor() {
+      if (this.history.length < this.calibFrames) return;
+      const s = this.history.slice().sort((a, b) => a - b);
+      const p = s[Math.round((s.length - 1) * this.cfg.floorPercentile)];
+      this.floor = Math.max(p, this.cfg.minFloorDb);
     }
 
     _pushPreroll(frame) {

@@ -31,7 +31,9 @@ class DetectorConfig:
     min_active_s: float = 0.4
     max_event_s: float = 120.0
     # Noise floor adaptation time constant, seconds.
-    floor_tau_s: float = 20.0
+    # Room silence = 20th percentile of frame levels over 30 s: a snore cannot mask the next words.
+    floor_window_s: float = 30.0
+    floor_percentile: float = 0.2
     calibration_s: float = 3.0
     # Floor never goes below this, so dead-silent inputs do not trigger on hiss.
     min_floor_db: float = -70.0
@@ -87,7 +89,7 @@ class Detector:
         self._hang_frames = max(1, int(c.hangover_s * fps))
         self._min_active = max(1, int(c.min_active_s * fps))
         self._max_frames = max(1, int(c.max_event_s * fps))
-        self._alpha = 1.0 / max(1.0, c.floor_tau_s * fps)
+        self._history = deque(maxlen=max(1, int(c.floor_window_s * fps)))
         self._calib_frames = int(c.calibration_s * fps)
         self._calib: list[float] = []
         self._floor: float | None = None
@@ -138,6 +140,7 @@ class Detector:
 
         if self._floor is None:
             self._calib.append(db)
+            self._history.append(db)
             self._preroll.append(frame.copy())
             if len(self._calib) >= max(1, self._calib_frames):
                 # Median is robust to a cough during calibration.
@@ -145,13 +148,13 @@ class Detector:
             return None
 
         active = self._is_active(frame, db)
+        self._history.append(db)
+        if idx % 10 == 0 and len(self._history) >= self._calib_frames:
+            self._floor = max(float(np.percentile(self._history, c.floor_percentile * 100)), c.min_floor_db)
         result = None
 
         if self._cur is None:
             self._recent.append(active)
-            if not active:
-                self._floor += self._alpha * (db - self._floor)
-                self._floor = max(self._floor, c.min_floor_db)
             if sum(self._recent) >= c.start_active:
                 pre = list(self._preroll)
                 self._cur = _Current(start_frame=idx - len(pre), frames=pre + [frame.copy()],

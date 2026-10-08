@@ -64,3 +64,8 @@ test("wav is 16 kHz 16-bit mono", () => {
   assert.strictEqual(v.getUint32(24, true), 16000);
   assert.strictEqual(buf.byteLength, 44 + 16000 * 2);
 });
+
+test("quiet phrase right after snoring is caught", () => {
+  const ev = run(cat(noise(15), add(noise(6), snore(6, 0.3)), noise(6), add(noise(1.5), speech(1.5, 0.03)), noise(10)));
+  assert.strictEqual(ev.length, 1);
+});

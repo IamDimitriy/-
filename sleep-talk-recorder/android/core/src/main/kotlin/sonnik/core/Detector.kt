@@ -27,7 +27,13 @@ data class DetectorConfig(
     val hangoverS: Double = 2.5,
     val minActiveS: Double = 0.4,
     val maxEventS: Double = 120.0,
-    val floorTauS: Double = 20.0,
+    /**
+     * The room's silence is the [floorPercentile] of frame levels over the last [floorWindowS].
+     * A percentile ignores short loud sounds (a snore must not mask the words right after it)
+     * and still follows a lasting change such as a fan switched on.
+     */
+    val floorWindowS: Double = 30.0,
+    val floorPercentile: Double = 0.2,
     val calibrationS: Double = 3.0,
     val minFloorDb: Double = -70.0,
 )
@@ -74,7 +80,9 @@ class Detector(val sampleRate: Int, val cfg: DetectorConfig = DetectorConfig()) 
     private val hangFrames = max(1, (cfg.hangoverS * fps).roundToInt())
     private val minActive = max(1, (cfg.minActiveS * fps).roundToInt())
     private val maxFrames = max(1, (cfg.maxEventS * fps).roundToInt())
-    private val alpha = 1.0 / max(1.0, cfg.floorTauS * fps)
+    private val history = DoubleArray(max(1, (cfg.floorWindowS * fps).roundToInt()))
+    private var historyCount = 0
+    private var historyPos = 0
     private val calibFrames = max(1, (cfg.calibrationS * fps).roundToInt())
 
     private val hp60 = Biquad(false, 60.0, sampleRate)
@@ -145,19 +153,22 @@ class Detector(val sampleRate: Int, val cfg: DetectorConfig = DetectorConfig()) 
         if (floor == null) {
             calib.add(db)
             pushPreroll(frame)
+            remember(db)
             if (calib.size >= calibFrames) {
+                // Median is robust to a cough during calibration.
                 floorDb = max(calib.sorted()[calib.size / 2], cfg.minFloorDb)
             }
             return null
         }
 
         val active = db >= floor + cfg.thresholdDb && (cfg.minSpeechRatio <= 0 || ratio >= cfg.minSpeechRatio)
+        remember(db)
+        if (idx % FLOOR_EVERY == 0L) updateFloor()
 
         val c = cur
         if (c == null) {
             recent.addLast(active)
             if (recent.size > cfg.startWindow) recent.removeFirst()
-            if (!active) floorDb = max(floor + alpha * (db - floor), cfg.minFloorDb)
             val count = recent.count { it }
             if (count >= cfg.startActive) {
                 val frames = ArrayList<FloatArray>(preroll)
@@ -175,6 +186,19 @@ class Detector(val sampleRate: Int, val cfg: DetectorConfig = DetectorConfig()) 
         c.peakDb = max(c.peakDb, db)
         if (active) { c.active++; c.silentRun = 0 } else c.silentRun++
         return if (c.silentRun >= hangFrames || c.frames.size >= maxFrames) finish() else null
+    }
+
+    private fun remember(db: Double) {
+        history[historyPos] = db
+        historyPos = (historyPos + 1) % history.size
+        if (historyCount < history.size) historyCount++
+    }
+
+    private fun updateFloor() {
+        if (historyCount < calibFrames) return
+        val sorted = history.copyOf(historyCount).also { it.sort() }
+        val p = sorted[((historyCount - 1) * cfg.floorPercentile).roundToInt()]
+        floorDb = max(p, cfg.minFloorDb)
     }
 
     private fun pushPreroll(frame: FloatArray) {
@@ -200,3 +224,5 @@ class Detector(val sampleRate: Int, val cfg: DetectorConfig = DetectorConfig()) 
         )
     }
 }
+
+private const val FLOOR_EVERY = 10L // frames between floor updates (~0.3 s)

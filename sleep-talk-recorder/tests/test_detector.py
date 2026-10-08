@@ -76,3 +76,9 @@ def test_extract_writes_clips_log_and_report(tmp_path):
     assert rows[0]["started_at"].startswith("2026-10-08T23:40:1")
     assert (session / rows[0]["file"]).exists()
     assert "Эпизодов: 1" in (session / "index.html").read_text(encoding="utf-8")
+
+
+def test_quiet_phrase_right_after_snoring_is_caught():
+    # Snoring used to raise the noise floor and hide the next phrase.
+    audio = np.concatenate([noise(15), noise(6) + snore(6, 0.3), noise(6), noise(1.5) + speech(1.5, 0.03), noise(10)])
+    assert len(run(audio)) == 1

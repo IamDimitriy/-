@@ -40,6 +40,15 @@ class DetectorTest {
         assertEquals(0, runDetector(audio).size)
     }
 
+    @Test fun quietPhraseRightAfterSnoringIsCaught() {
+        // Seen in the emulator demo: snoring used to raise the noise floor and hide the next phrase.
+        val audio = cat(
+            s.noise(15.0), s.noise(6.0) + s.snore(6.0, level = 0.3), s.noise(6.0),
+            s.noise(1.5) + s.speech(1.5, level = 0.03), s.noise(10.0),
+        )
+        assertEquals(1, runDetector(audio).size)
+    }
+
     @Test fun anySoundModeKeepsSnoring() {
         val audio = cat(s.noise(10.0), s.noise(5.0) + s.snore(5.0), s.noise(10.0))
         assertEquals(1, runDetector(audio, cfg = DetectorConfig(minSpeechRatio = 0.0)).size)
