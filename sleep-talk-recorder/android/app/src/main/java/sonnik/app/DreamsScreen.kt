@@ -140,12 +140,8 @@ private fun DreamCard(d: Dream, onClick: () -> Unit) {
                     Text(it.title, style = MaterialTheme.typography.bodySmall, color = Palette.muted)
                 }
             }
-            Text(d.title, style = MaterialTheme.typography.titleMedium)
-            // The rest of the dream after the first sentence, so the title is not repeated.
-            val rest = d.text.trim().removePrefix(d.title.removeSuffix("…")).trimStart('.', '!', '?', ',', ' ', '\n')
-            if (rest.isNotBlank() && !d.title.endsWith("…")) {
-                Text(rest, maxLines = 3, overflow = TextOverflow.Ellipsis, color = Palette.muted)
-            }
+            // The dream itself; a separate title would only repeat its first sentence.
+            Text(d.text.ifBlank { d.title }, maxLines = 4, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
             if (d.notes.isNotBlank()) Text("Есть толкование", style = MaterialTheme.typography.labelSmall, color = Palette.amber)
         }
     }
