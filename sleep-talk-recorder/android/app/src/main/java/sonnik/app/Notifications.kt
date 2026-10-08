@@ -176,8 +176,9 @@ object Notifications {
 
     fun cancelStartPrompt(ctx: Context) = NotificationManagerCompat.from(ctx).cancel(START_ID)
 
-    fun morning(ctx: Context, clips: Int, snoreMinutes: Int = 0) {
-        val snore = if (snoreMinutes > 0) " · храп ${minutesText(snoreMinutes)}" else ""
+    fun morning(ctx: Context, clips: Int, sounds: Int = 0, snoreMinutes: Int = 0) {
+        val snore = (if (sounds > 0) " · ${soundsText(sounds)}" else "") +
+            (if (snoreMinutes > 0) " · храп ${minutesText(snoreMinutes)}" else "")
         val n = NotificationCompat.Builder(ctx, CH_INFO)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("За ночь: ${phrases(clips)}$snore")
@@ -209,6 +210,8 @@ object Notifications {
 }
 
 fun phrases(n: Int): String = "$n ${plural(n, "фраза", "фразы", "фраз")}"
+
+fun soundsText(n: Int): String = "$n ${plural(n, "звук", "звука", "звуков")}"
 
 /** "45 мин", "1 ч 20 мин". */
 fun minutesText(m: Int): String = when {

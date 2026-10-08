@@ -52,10 +52,10 @@ object TestAudio {
         return out
     }
 
-    /** 10 s of room, a phrase, snoring, another phrase: two clips should be kept. */
+    /** 10 s of room, a phrase, snoring, another phrase: two phrases and one snoring clip. */
     fun night(): ShortArray = cat(
         noise(10.0), mix(noise(2.0), speech(2.0)), noise(8.0),
-        mix(noise(4.0), snore(4.0)), noise(6.0),
+        snoring(12.0), noise(6.0),
         mix(noise(2.0), speech(2.0)), noise(6.0),
     )
 }

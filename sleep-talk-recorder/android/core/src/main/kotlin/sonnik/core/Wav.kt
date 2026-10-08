@@ -17,6 +17,19 @@ object Wav {
         return buf.array()
     }
 
+    /**
+     * Raises a quiet clip so it is easy to hear: the peak goes to [target], with at most
+     * [maxGain] times amplification so near-silence does not turn into loud hiss.
+     */
+    fun normalized(audio: FloatArray, target: Float = 0.7f, maxGain: Float = 20f): FloatArray {
+        var peak = 0f
+        for (s in audio) peak = maxOf(peak, kotlin.math.abs(s))
+        if (peak <= 0f) return audio
+        val gain = minOf(maxGain, target / peak)
+        if (gain <= 1f) return audio
+        return FloatArray(audio.size) { audio[it] * gain }
+    }
+
     fun write(file: File, audio: FloatArray, sampleRate: Int) {
         val tmp = File(file.parentFile, file.name + ".part")
         tmp.outputStream().use { it.write(encode(audio, sampleRate)) }

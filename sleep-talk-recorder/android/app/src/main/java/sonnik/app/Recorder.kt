@@ -14,7 +14,10 @@ data class RecorderState(
     /** When saving starts (epoch ms). Before it the microphone is on but nothing is kept. */
     val saveFrom: Long = 0,
     val stopAt: Long = 0,
+    /** Phrases saved so far. */
     val clips: Int = 0,
+    /** Other saved sounds: snoring samples, creaks, the street. */
+    val sounds: Int = 0,
     val lastClipAt: Long = 0,
     /** 0..1, how loud the room is relative to the trigger level. */
     val level: Float = 0f,

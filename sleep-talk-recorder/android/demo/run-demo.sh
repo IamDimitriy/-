@@ -92,8 +92,11 @@ wait $REC
 adb pull /sdcard/demo.mp4 "$OUT/demo.mp4" >> "$LOG" 2>&1
 adb shell run-as $PKG ls -lR files/nights >> "$LOG" 2>&1
 # adb joins its arguments with spaces, so the remote command is quoted as one string.
-CLIPS=$(adb shell "run-as $PKG sh -c 'ls files/nights/*/*.wav'" 2>/dev/null | grep -c '\.wav')
-log "clips kept from the demo night: $CLIPS (expected 3 phrases, snoring ignored)"
+CLIP_NAMES=$(adb shell "run-as $PKG sh -c 'ls files/nights/*/*.wav'" 2>/dev/null)
+CLIPS=$(echo "$CLIP_NAMES" | grep -c '__speech')
+SNORES=$(echo "$CLIP_NAMES" | grep -c '__snore')
+log "clips kept from the demo night: $CLIPS phrases (expected 3), $SNORES snoring samples (expected 1+)"
+echo "$CLIP_NAMES" >> "$LOG"
 
 # ---------- Part 2: automatic start with the screen off ----------
 log "schedule tonight two minutes from now, then lock the phone"
@@ -151,7 +154,8 @@ grep -E "Sonnik|FullScreen|FSI|$PKG" "$OUT/logcat.txt" > "$OUT/logcat-app.txt"
 log "done"
 
 FAILED=0
-[ "$CLIPS" = 3 ] || { log "FAIL: expected 3 clips, got $CLIPS"; FAILED=1; }
+[ "$CLIPS" = 3 ] || { log "FAIL: expected 3 phrases, got $CLIPS"; FAILED=1; }
+[ "$SNORES" -ge 1 ] || { log "FAIL: snoring was not saved as its own kind"; FAILED=1; }
 [ -n "$STARTED" ] || { log "FAIL: recording did not start by itself"; FAILED=1; }
 [ -n "$RANG" ] || { log "FAIL: the alarm did not ring"; FAILED=1; }
 exit $FAILED

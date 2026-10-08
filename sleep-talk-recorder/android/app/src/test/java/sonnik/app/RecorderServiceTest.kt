@@ -15,6 +15,7 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import sonnik.core.SoundKind
 import java.time.LocalTime
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -33,10 +34,12 @@ class RecorderServiceTest {
         Notifications.createChannels(ctx)
         Nights.root(ctx).deleteRecursively()
         Recorder.reset()
+        RecorderService.classifierFactory = { heuristicClassifier }
     }
 
     @After fun tearDown() {
         RecorderService.inputFactory = null
+        RecorderService.classifierFactory = null
         Recorder.reset()
     }
 
@@ -58,7 +61,7 @@ class RecorderServiceTest {
 
     private fun titles() = shadowOf(nm).allNotifications.map { it.extras.getCharSequence("android.title").toString() }
 
-    @Test fun keepsPhrasesDropsSnoringAndReportsInTheMorning() {
+    @Test fun sortsPhrasesAndSnoringAndReportsInTheMorning() {
         val input = FakeInput(TestAudio.night())
         RecorderService.inputFactory = { _, _ -> input }
         val service = start(now = true)
@@ -66,11 +69,12 @@ class RecorderServiceTest {
 
         waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
         val clips = Nights.list(ctx).single().clips
-        assertEquals(2, clips.size, "two phrases, snoring ignored")
-        assertTrue(clips.all { it.durationS in 3.0..9.0 }, clips.map { it.durationS }.toString())
+        val kinds = clips.map { it.sound.kind }
+        assertEquals(listOf(SoundKind.SPEECH, SoundKind.SNORE, SoundKind.SPEECH), kinds, clips.toString())
+        assertTrue(clips.filter { it.sound.kind == SoundKind.SPEECH }.all { it.durationS in 3.0..9.0 }, clips.toString())
         assertTrue(input.closed)
         assertTrue(shadowOf(service.get()).isStoppedBySelf)
-        assertTrue("За ночь: 2 фразы" in titles(), titles().toString())
+        assertTrue(titles().any { it.startsWith("За ночь: 2 фразы · 1 звук") }, titles().toString())
     }
 
     @Test fun showsLiveProgressWhileRecording() {
@@ -133,8 +137,8 @@ class RecorderServiceTest {
         assertEquals(4, night.minutes.size, night.minutes.toString())
         assertEquals(0.0, night.minutes[0].snoreS)
         assertTrue(night.summary.snoreMinutes >= 1, night.minutes.toString())
-        assertTrue(night.clips.isEmpty(), "snoring is not saved as phrases")
-        assertTrue(titles().any { it.startsWith("За ночь: 0 фраз · храп") }, titles().toString())
+        assertEquals(listOf(SoundKind.SNORE), night.clips.map { it.sound.kind }, "one sample of the snoring")
+        assertTrue(titles().any { it.startsWith("За ночь: 0 фраз · 1 звук · храп") }, titles().toString())
     }
 
     /** Ten calm minutes, then three restless ones: the smart alarm should ring before its time. */

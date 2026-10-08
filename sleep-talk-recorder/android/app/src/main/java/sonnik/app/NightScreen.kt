@@ -32,13 +32,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -56,13 +54,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
-import kotlin.math.roundToInt
 import sonnik.core.NightWindow
 import java.time.Duration
 import java.time.LocalDateTime
-
-/** Slider position (right = more sensitive) <-> dB threshold above the room's silence. */
-private const val SENS_SUM = 22
 
 @Composable
 fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
@@ -73,8 +67,6 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
     var auto by remember { mutableStateOf(prefs.autoStart) }
     var start by remember { mutableIntStateOf(prefs.startMinute) }
     var end by remember { mutableIntStateOf(prefs.endMinute) }
-    var sensitivity by remember { mutableFloatStateOf((SENS_SUM - prefs.threshold).toFloat()) }
-    var anySound by remember { mutableStateOf(prefs.anySound) }
     var alarmOn by remember { mutableStateOf(prefs.alarmOn) }
     var alarmMinute by remember { mutableIntStateOf(prefs.alarmMinute) }
     var alarmWindow by remember { mutableIntStateOf(prefs.alarmWindow) }
@@ -86,11 +78,9 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
         auto = prefs.autoStart
         start = prefs.startMinute
         end = prefs.endMinute
-        anySound = prefs.anySound
         alarmOn = prefs.alarmOn
         alarmMinute = prefs.alarmMinute
         alarmWindow = prefs.alarmWindow
-        sensitivity = (SENS_SUM - prefs.threshold).toFloat()
         skipped = Scheduler.isTonightSkipped(ctx)
         setup = Setup.items(ctx, prefs.autoStart || prefs.alarmOn)
         onPauseOrDispose { }
@@ -204,34 +194,10 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
             }
         }
 
-        Section("Чувствительность") {
-            Slider(
-                value = sensitivity,
-                onValueChange = { sensitivity = it },
-                onValueChangeFinished = { prefs.threshold = SENS_SUM - sensitivity.roundToInt() },
-                valueRange = 4f..18f,
-                steps = 13,
-            )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("только громкая речь", style = MaterialTheme.typography.bodySmall, color = Palette.muted)
-                Text("даже шёпот", style = MaterialTheme.typography.bodySmall, color = Palette.muted)
-            }
-            Spacer(Modifier.height(8.dp))
-            HorizontalDivider()
-            SettingRow("Записывать любые звуки", "Вместе с храпом, скрипом и кашлем") {
-                Switch(checked = anySound, onCheckedChange = { anySound = it; prefs.anySound = it })
-            }
-            if (state.phase != Phase.IDLE) {
-                Text(
-                    "Изменения заработают со следующего запуска.",
-                    style = MaterialTheme.typography.bodySmall, color = Palette.muted,
-                )
-            }
-        }
-
         Text(
-            "Записи хранятся только на этом телефоне. Микрофон слушает всю ночь, " +
-                "но сохраняются лишь фрагменты, где звучит речь.",
+            "Записи хранятся только на этом телефоне. Микрофон слушает всю ночь на максимальной " +
+                "чувствительности и сохраняет только фрагменты со звуком, разложенные по видам: " +
+                "речь, храп, кашель, скрип и шорох, улица.",
             style = MaterialTheme.typography.bodySmall, color = Palette.muted,
         )
     }
@@ -268,6 +234,7 @@ private fun StatusCard(
                         (if (state.alarmAt > 0) "" else "До ${Notifications.time(state.stopAt)} · ") +
                             (if (state.clips == 0) "фраз пока нет"
                             else "${phrases(state.clips)}, последняя в ${Notifications.time(state.lastClipAt)}") +
+                            (if (state.sounds > 0) " · ${soundsText(state.sounds)}" else "") +
                             (if (state.snoreMinutes > 0) " · храп ${minutesText(state.snoreMinutes)}" else ""),
                         color = Palette.muted,
                     )

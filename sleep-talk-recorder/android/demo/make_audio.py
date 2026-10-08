@@ -1,4 +1,4 @@
-"""Builds demo/night.wav: a minute of a quiet bedroom with three sleep-talk phrases and snoring.
+"""Builds demo/night.wav: a quiet bedroom with three sleep-talk phrases, snoring and a knock.
 
 Phrases are synthesised with espeak-ng (Russian voice), the room is soft noise, the snoring is a
 low rumble the app should ignore. Run: python3 make_audio.py out.wav
@@ -31,6 +31,17 @@ def snore(seconds, level=0.25):
     return (level * breath * np.sin(2 * np.pi * 70 * t) * (0.6 + 0.4 * np.sin(2 * np.pi * 28 * t))).astype(np.float32)
 
 
+def knock(times=3, level=0.5):
+    """Knuckles on a wooden door: short decaying bursts of mid-frequency noise."""
+    one = int(RATE * 0.25)
+    out = np.zeros(one * times, np.float32)
+    t = np.arange(int(RATE * 0.06)) / RATE
+    burst = rng.standard_normal(len(t)) * np.exp(-t * 70) + np.sin(2 * np.pi * 180 * t) * np.exp(-t * 40)
+    for k in range(times):
+        out[k * one:k * one + len(t)] += (level * burst / np.abs(burst).max()).astype(np.float32)
+    return out
+
+
 def say(text):
     with tempfile.NamedTemporaryFile(suffix=".wav") as f:
         subprocess.run(["espeak-ng", "-v", "ru", "-s", "130", "-a", "60", "-w", f.name, text], check=True)
@@ -53,7 +64,8 @@ def main(out):
         over_room(say(PHRASES[0])), room(9),
         over_room(snore(60)), room(6),
         over_room(say(PHRASES[1])), room(9),
-        over_room(say(PHRASES[2])), room(40),
+        over_room(say(PHRASES[2])), room(12),
+        over_room(knock()), room(25),
     ]
     audio = np.clip(np.concatenate(parts), -1, 1)
     with wave.open(out, "wb") as w:

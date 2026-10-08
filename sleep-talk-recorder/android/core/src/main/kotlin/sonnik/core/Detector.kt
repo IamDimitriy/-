@@ -159,7 +159,9 @@ class Detector(val sampleRate: Int, val cfg: DetectorConfig = DetectorConfig()) 
             FrameInfo(
                 timeS = idx * frameLen.toDouble() / sampleRate, durationS = frameLen.toDouble() / sampleRate,
                 db = db, floorDb = floor, speechRatio = ratio,
-                lowRatio = if (all > 0) low / all else 0.0, speech = active,
+                lowRatio = if (all > 0) low / all else 0.0,
+                // Speech for the statistics, whatever the detector is set to catch.
+                speech = db >= floor + cfg.thresholdDb && ratio >= SPEECH_RATIO,
             )
         )
 
@@ -224,10 +226,11 @@ class Detector(val sampleRate: Int, val cfg: DetectorConfig = DetectorConfig()) 
 }
 
 private const val LOW_BAND_HZ = 400.0
+private const val SPEECH_RATIO = 0.45
 private const val FLOOR_EVERY = 10L // frames between floor updates (~0.3 s)
 
 /** Power spectrum of one frame; energy() sums it over a frequency range. */
-private class Spectrum(private val frameLen: Int, private val sampleRate: Int) {
+internal class Spectrum(private val frameLen: Int, private val sampleRate: Int) {
     private val n = Integer.highestOneBit(frameLen - 1).shl(1).coerceAtLeast(2)
     private val window = DoubleArray(frameLen) { 0.5 - 0.5 * cos(2 * PI * it / (frameLen - 1).coerceAtLeast(1)) }
     private val re = DoubleArray(n)

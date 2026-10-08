@@ -18,6 +18,8 @@ import androidx.core.content.ContextCompat
 import sonnik.core.Detector
 import sonnik.core.DetectorConfig
 import sonnik.core.ActivityMeter
+import sonnik.core.ClipPolicy
+import sonnik.core.SoundKind
 import sonnik.core.Episode
 import sonnik.core.Minute
 import sonnik.core.NightPlan
@@ -27,6 +29,9 @@ import java.io.File
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Foreground service that owns the microphone for the night.
@@ -104,10 +109,9 @@ class RecorderService : Service() {
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "sonnik:night")
             .apply { acquire(stopAt - System.currentTimeMillis() + 60_000) }
 
-        val config = DetectorConfig(
-            thresholdDb = prefs.threshold.toDouble(),
-            minSpeechRatio = if (prefs.anySound) 0.0 else 0.45,
-        )
+        // The most sensitive setting: any sound 4 dB above the room's silence becomes a clip,
+        // and the classifier decides whether it is speech, snoring, a creak or the street.
+        val config = DetectorConfig(thresholdDb = SENSITIVITY_DB, minSpeechRatio = 0.0)
         running = true
         val wake = alarmAt?.let { WakePlan(it, prefs.alarmWindow) }
         worker = Thread({ listen(input, config, plan, wake) }, "sonnik-mic").also { it.start() }
@@ -136,7 +140,12 @@ class RecorderService : Service() {
         val saveFrom = plan.saveFrom.atZone(zone).toInstant().toEpochMilli()
         val stopAt = plan.stopAt.atZone(zone).toInstant().toEpochMilli()
         var nightDir: File? = null
-        var clips = 0
+        val phrases = AtomicInteger()
+        val sounds = AtomicInteger()
+        // Classifying a long clip takes a moment, so it happens off the thread that reads the mic.
+        val saver = Executors.newSingleThreadExecutor()
+        val classifier = (classifierFactory ?: YamnetClassifier::createOrFallback)(this)
+        val policy = ClipPolicy()
         val buf = ShortArray(rate / 10)
         var lastUi = 0L
         var lastPhase = Recorder.state.value.phase
@@ -147,7 +156,7 @@ class RecorderService : Service() {
 
         // Minute-by-minute statistics from the moment the night starts.
         val minutes = ArrayList<Minute>()
-        val meter = ActivityMeter(thresholdDb = config.thresholdDb, startS = maxOf(0.0, (saveFrom - streamStart) / 1000.0))
+        val meter = ActivityMeter(startS = maxOf(0.0, (saveFrom - streamStart) / 1000.0))
         var rang = false
         fun minuteDone(m: Minute) {
             minutes += m
@@ -172,12 +181,21 @@ class RecorderService : Service() {
             val end = start.plusNanos((ep.durationS * 1e9).toLong())
             if (!plan.keeps(start, end)) return
             val dir = nightDir ?: Nights.dirFor(this, plan.saveFrom).also { nightDir = it }
-            runCatching {
-                Nights.save(dir, start, ep)
-                clips++
-                Recorder.update { it.copy(clips = clips, lastClipAt = at) }
-                main.post { Notifications.refreshRecording(this) }
-            }.onFailure { Log.w(TAG, "Save failed", it) }
+            saver.execute {
+                runCatching {
+                    val sound = classifier.classify(ep.audio, ep.sampleRate)
+                    if (!policy.keep(sound.kind, start)) return@runCatching
+                    Nights.save(dir, start, ep, sound)
+                    if (sound.kind == SoundKind.SPEECH) {
+                        val n = phrases.incrementAndGet()
+                        Recorder.update { it.copy(clips = n, lastClipAt = at) }
+                    } else {
+                        val n = sounds.incrementAndGet()
+                        Recorder.update { it.copy(sounds = n) }
+                    }
+                    main.post { Notifications.refreshRecording(this) }
+                }.onFailure { Log.w(TAG, "Save failed", it) }
+            }
         }
 
         try {
@@ -211,21 +229,25 @@ class RecorderService : Service() {
             Log.w(TAG, "Recording failed", e)
         } finally {
             input.close()
+            saver.shutdown()
+            saver.awaitTermination(2, TimeUnit.MINUTES)
+            classifier.close()
         }
-        val total = clips
+        val total = phrases.get()
+        val other = sounds.get()
         val snore = NightSummary.of(minutes).snoreMinutes
-        Log.i(TAG, "Recording session ended, clips kept: $total, snoring: $snore min, minutes: ${minutes.size}")
-        main.post { finishSession(total, snore) }
+        Log.i(TAG, "Recording session ended: $total phrases, $other other sounds, snoring $snore min, ${minutes.size} min")
+        main.post { finishSession(total, other, snore) }
     }
 
-    private fun finishSession(clips: Int, snoreMinutes: Int = 0) {
+    private fun finishSession(clips: Int, sounds: Int = 0, snoreMinutes: Int = 0) {
         running = false
         worker = null
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
         Recorder.reset()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        if (clips > 0 || snoreMinutes > 0) Notifications.morning(this, clips, snoreMinutes)
+        if (clips > 0 || sounds > 0 || snoreMinutes > 0) Notifications.morning(this, clips, sounds, snoreMinutes)
         Scheduler.sync(this)
         stopSelf()
     }
@@ -241,6 +263,12 @@ class RecorderService : Service() {
         /** Debug builds only: name of a WAV file in the app's files dir to play instead of the mic. */
         const val EXTRA_DEMO_WAV = "demo_wav"
         private const val TAG = "Sonnik"
+        private const val SENSITIVITY_DB = 4.0
+
+        /** Lets tests use the rule-based classifier instead of the neural one. */
+        @VisibleForTesting
+        @Volatile
+        var classifierFactory: ((Context) -> SoundClassifier)? = null
 
         /** Lets tests feed audio without a microphone. */
         @VisibleForTesting

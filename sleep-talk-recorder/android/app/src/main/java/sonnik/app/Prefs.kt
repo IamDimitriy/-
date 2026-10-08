@@ -21,15 +21,6 @@ class Prefs(context: Context) {
         get() = sp.getInt("end", 7 * 60)
         set(v) = sp.edit().putInt("end", v).apply()
 
-    /** How many dB above the room's silence a sound must be. Lower = more sensitive. */
-    var threshold: Int
-        get() = sp.getInt("threshold", 10)
-        set(v) = sp.edit().putInt("threshold", v).apply()
-
-    var anySound: Boolean
-        get() = sp.getBoolean("anySound", false)
-        set(v) = sp.edit().putBoolean("anySound", v).apply()
-
     /** Start of a night the user chose to skip (ISO date-time), or null. */
     var skippedStart: LocalDateTime?
         get() = sp.getString("skip", null)?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }

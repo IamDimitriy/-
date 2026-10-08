@@ -9,6 +9,8 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import sonnik.core.Episode
 import sonnik.core.Minute
+import sonnik.core.SoundClass
+import sonnik.core.SoundKind
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -64,6 +66,35 @@ class NightsTest {
         val nights = Nights.list(ctx)
         assertEquals(1, nights.size)
         assertTrue(nights.single().clips.isEmpty())
+    }
+
+    @Test fun categoryIsKeptInTheFileName() {
+        val dir = Nights.dirFor(ctx, at("2026-10-09T00:00"))
+        val f = Nights.save(dir, at("2026-10-09T02:00:00"), ep(1.0), SoundClass(SoundKind.MOVEMENT, "door"))
+        assertEquals("2026-10-09_02-00-00__move-door.wav", f.name)
+        Nights.save(dir, at("2026-10-09T02:30:00"), ep(1.0), SoundClass(SoundKind.SNORE))
+        val clips = Nights.list(ctx).single().clips
+        assertEquals(listOf(SoundClass(SoundKind.MOVEMENT, "door"), SoundClass(SoundKind.SNORE)), clips.map { it.sound })
+        assertEquals("Скрип и шорох · дверь", clips[0].sound.title)
+    }
+
+    @Test fun clipsFromOlderVersionsAreSpeech() {
+        val dir = Nights.dirFor(ctx, at("2026-10-09T00:00"))
+        sonnik.core.Wav.write(File(dir, "2026-10-09_03-12-45.wav"), FloatArray(16000), 16000)
+        sonnik.core.Wav.write(File(dir, "2026-10-09_03-12-45_1.wav"), FloatArray(16000), 16000)
+        val night = Nights.list(ctx).single()
+        assertEquals(2, night.phrases)
+        assertEquals(0, night.sounds)
+    }
+
+    @Test fun quietClipsAreSavedLouder() {
+        val dir = Nights.dirFor(ctx, at("2026-10-09T00:00"))
+        val quiet = Episode(0.0, 16000, FloatArray(16000) { if (it % 2 == 0) 0.02f else -0.02f }, -30.0, 1.0)
+        val f = Nights.save(dir, at("2026-10-09T03:00:00"), quiet)
+        val r = sonnik.core.Wav.Reader(f.inputStream())
+        val buf = ShortArray(10)
+        r.read(buf)
+        assertTrue(buf[0] / 32767f > 0.3f, "peak ${buf[0] / 32767f}")
     }
 
     @Test fun minuteStatisticsAreReadBack() {

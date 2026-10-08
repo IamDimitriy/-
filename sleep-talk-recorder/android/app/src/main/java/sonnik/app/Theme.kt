@@ -23,6 +23,16 @@ object Palette {
     val danger = Color(0xFFE57A6E)
     val ok = Color(0xFF8FBF8A)
     val snore = Color(0xFF7F9CF5)
+
+    /** One colour per kind of sound, used for dots in lists and on the night graph. */
+    fun kind(k: sonnik.core.SoundKind): Color = when (k) {
+        sonnik.core.SoundKind.SPEECH -> amber
+        sonnik.core.SoundKind.SNORE -> snore
+        sonnik.core.SoundKind.COUGH -> Color(0xFFE57A9A)
+        sonnik.core.SoundKind.MOVEMENT -> Color(0xFFB7A27C)
+        sonnik.core.SoundKind.STREET -> Color(0xFF6FBFA8)
+        sonnik.core.SoundKind.OTHER -> muted
+    }
 }
 
 @Composable

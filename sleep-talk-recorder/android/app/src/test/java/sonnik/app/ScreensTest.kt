@@ -24,6 +24,8 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import sonnik.core.Episode
 import sonnik.core.Minute
+import sonnik.core.SoundClass
+import sonnik.core.SoundKind
 import java.time.LocalDateTime
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -138,6 +140,30 @@ class ScreensTest {
         compose.onNodeWithText("00:30").assertIsDisplayed()
     }
 
+    @Test fun filterByKindOfSound() {
+        val dir = Nights.dirFor(ctx, LocalDateTime.parse("2026-10-09T00:00"))
+        val ep = Episode(0.0, 16000, FloatArray(16000 * 3), -20.0, 3.0)
+        Nights.save(dir, LocalDateTime.parse("2026-10-09T01:00:00"), ep)
+        Nights.save(dir, LocalDateTime.parse("2026-10-09T02:00:00"), ep, SoundClass(SoundKind.STREET, "dog"))
+        Nights.save(dir, LocalDateTime.parse("2026-10-09T03:00:00"), ep, SoundClass(SoundKind.SNORE))
+        records()
+        waitForText("Ночь на 9 октября")
+        compose.onNodeWithText("Улица · собака · 3 с").assertExists()
+        compose.onNodeWithText("1 фраза · 2 звука", substring = true).assertExists()
+        compose.onNodeWithText("Улица 1").performClick()
+        compose.onNodeWithText("02:00:00").assertExists()
+        compose.onNodeWithText("01:00:00").assertDoesNotExist()
+        compose.onNodeWithText("03:00:00").assertDoesNotExist()
+        compose.onNodeWithText("Все").performClick()
+        compose.onNodeWithText("01:00:00").assertExists()
+    }
+
+    @Test fun noSensitivitySetting() {
+        night()
+        compose.onNodeWithText("Чувствительность").assertDoesNotExist()
+        compose.onNodeWithText("Записывать любые звуки").assertDoesNotExist()
+    }
+
     @Test fun recordsEmptyState() {
         records()
         waitForText("Здесь появятся ночи")
@@ -155,7 +181,7 @@ class ScreensTest {
         compose.onNodeWithText("1 ночь · 2 фразы", substring = true).assertIsDisplayed()
         compose.onNodeWithText("03:12:45").assertIsDisplayed()
         compose.onAllNodesWithContentDescription("Удалить").onFirst().performClick()
-        compose.onNodeWithText("Удалить фразу?").assertIsDisplayed()
+        compose.onNodeWithText("Удалить запись?").assertIsDisplayed()
         compose.onNodeWithText("Удалить").performClick()
         compose.waitForIdle()
         compose.waitUntil(5_000) { Nights.list(ctx).single().clips.size == 1 }

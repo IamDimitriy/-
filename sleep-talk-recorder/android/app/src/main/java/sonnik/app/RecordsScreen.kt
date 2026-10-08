@@ -16,6 +16,10 @@ import java.time.Duration
 import kotlin.math.max
 import kotlin.math.sqrt
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.FilterChip
+import sonnik.core.SoundKind
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -122,8 +126,10 @@ fun RecordsScreen() {
     var version by remember { mutableStateOf(0) }
     val player = remember { ClipPlayer() }
     var pending by remember { mutableStateOf<PendingDelete?>(null) }
+    /** Show only one kind of sound, or everything when null. */
+    var filter by remember { mutableStateOf<SoundKind?>(null) }
 
-    LaunchedEffect(version, rec.clips) {
+    LaunchedEffect(version, rec.clips, rec.sounds) {
         nights = withContext(Dispatchers.IO) { Nights.list(ctx) }
     }
     LifecycleResumeEffect(Unit) {
@@ -135,7 +141,11 @@ fun RecordsScreen() {
     }
     DisposableEffect(Unit) { onDispose { player.stop() } }
 
-    val list = nights
+    val all = nights
+    val list = all?.let { ns ->
+        if (filter == null) ns
+        else ns.map { n -> n.copy(clips = n.clips.filter { it.sound.kind == filter }) }.filter { it.clips.isNotEmpty() }
+    }
     LazyColumn(
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -143,19 +153,38 @@ fun RecordsScreen() {
         item {
             Column {
                 Text("Записи", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
-                if (!list.isNullOrEmpty()) {
-                    val total = list.sumOf { it.clips.size }
-                    val bytes = list.sumOf { n -> n.clips.sumOf { it.file.length() } }
+                if (!all.isNullOrEmpty()) {
+                    val bytes = all.sumOf { n -> n.clips.sumOf { it.file.length() } }
                     Text(
-                        "${list.size} ${plural(list.size, "ночь", "ночи", "ночей")} · ${phrases(total)} · ${megabytes(bytes)}",
+                        "${all.size} ${plural(all.size, "ночь", "ночи", "ночей")} · " +
+                            "${phrases(all.sumOf { it.phrases })} · ${soundsText(all.sumOf { it.sounds })} · ${megabytes(bytes)}",
                         color = Palette.muted, style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        }
+        if (!all.isNullOrEmpty()) item {
+            val counts = all.flatMap { it.clips }.groupingBy { it.sound.kind }.eachCount()
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                FilterChip(selected = filter == null, onClick = { filter = null }, label = { Text("Все") })
+                for (kind in SoundKind.entries) {
+                    val n = counts[kind] ?: continue
+                    FilterChip(
+                        selected = filter == kind,
+                        onClick = { filter = if (filter == kind) null else kind },
+                        label = { Text("${kind.title} $n") },
+                        leadingIcon = { Box(Modifier.size(8.dp).clip(CircleShape).background(Palette.kind(kind))) },
                     )
                 }
             }
         }
         if (list != null && list.isEmpty()) item {
             Text(
-                "Здесь появятся ночи. Каждая — список фраз со временем, которые можно послушать и отправить.",
+                "Здесь появятся ночи. В каждой — фразы, храп и другие звуки со временем: " +
+                    "их можно послушать и отправить.",
                 color = Palette.muted,
             )
         }
@@ -174,10 +203,10 @@ fun RecordsScreen() {
     pending?.let { p ->
         AlertDialog(
             onDismissRequest = { pending = null },
-            title = { Text(if (p is PendingDelete.WholeNight) "Удалить ночь?" else "Удалить фразу?") },
+            title = { Text(if (p is PendingDelete.WholeNight) "Удалить ночь?" else "Удалить запись?") },
             text = {
                 Text(
-                    if (p is PendingDelete.WholeNight) "Все ${phrases(p.night.clips.size)} этой ночи пропадут насовсем."
+                    if (p is PendingDelete.WholeNight) "Все записи этой ночи (${p.night.clips.size}) пропадут насовсем."
                     else "Запись пропадёт насовсем."
                 )
             },
@@ -214,7 +243,8 @@ private fun NightCard(
                     val sum = night.summary
                     Text(
                         "с ${night.start.format(timeFmt)} · " +
-                            (if (night.clips.isEmpty()) "тихо" else phrases(night.clips.size)) +
+                            (if (night.clips.isEmpty()) "тихо" else phrases(night.phrases)) +
+                            (if (night.sounds > 0) " · ${soundsText(night.sounds)}" else "") +
                             (if (sum.snoreMinutes > 0) " · храп ${minutesText(sum.snoreMinutes)}" else "") +
                             if (live) " · идёт запись" else "",
                         style = MaterialTheme.typography.bodySmall, color = Palette.muted,
@@ -253,7 +283,14 @@ private fun ClipRow(clip: Clip, player: ClipPlayer, onShare: (Clip) -> Unit, onD
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(clip.at.format(secFmt), color = Palette.amber, fontWeight = FontWeight.SemiBold)
-                Text("%.0f с".format(clip.durationS), style = MaterialTheme.typography.bodySmall, color = Palette.muted)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(7.dp).clip(CircleShape).background(Palette.kind(clip.sound.kind)))
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "${clip.sound.title} · %.0f с".format(clip.durationS),
+                        style = MaterialTheme.typography.bodySmall, color = Palette.muted,
+                    )
+                }
             }
             IconButton(onClick = { onShare(clip) }) { Icon(Icons.Filled.Share, "Отправить", tint = Palette.muted) }
             IconButton(onClick = { onDelete(clip) }) { Icon(Icons.Filled.Delete, "Удалить", tint = Palette.muted) }
@@ -287,7 +324,7 @@ private fun share(ctx: Context, clip: Clip) {
 private fun NightTimeline(night: Night) {
     val minutes = night.minutes
     val total = (minutes.maxOf { it.index } + 1).coerceAtLeast(1)
-    val clipMinutes = night.clips.map { Duration.between(night.start, it.at).toMinutes().toFloat() }
+    val clipMarks = night.clips.map { Duration.between(night.start, it.at).toMinutes().toFloat() to Palette.kind(it.sound.kind) }
     val end = night.start.plusMinutes(total.toLong())
     Column(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
         Canvas(
@@ -306,8 +343,8 @@ private fun NightTimeline(night: Night) {
                 val color = if (m.snoreS >= 10.0) Palette.snore else Palette.muted.copy(alpha = 0.55f)
                 drawRect(color, Offset(m.index * w, size.height - bar), Size(max(w * 0.8f, 1f), bar))
             }
-            for (cm in clipMinutes) {
-                drawCircle(Palette.amber, radius = 3.dp.toPx(), center = Offset((cm + 0.5f) * w, 3.dp.toPx()))
+            for ((cm, color) in clipMarks) {
+                drawCircle(color, radius = 3.dp.toPx(), center = Offset((cm + 0.5f) * w, 3.dp.toPx()))
             }
         }
         Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -315,7 +352,7 @@ private fun NightTimeline(night: Night) {
             Text(end.format(timeFmt), style = MaterialTheme.typography.labelSmall, color = Palette.muted)
         }
         Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Legend(Palette.amber, "фраза")
+            Legend(Palette.amber, "записи")
             Legend(Palette.snore, "храп")
             Legend(Palette.muted, "беспокойно")
         }
