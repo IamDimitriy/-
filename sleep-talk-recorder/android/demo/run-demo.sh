@@ -18,13 +18,18 @@ log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
 shot() { adb exec-out screencap -p > "$OUT/$1.png"; log "screenshot $1"; }
 app() { adb shell am start -n "$PKG/sonnik.app.MainActivity" "$@" > /dev/null; }
 service_running() { adb shell dumpsys activity services "$PKG" | grep -q "RecorderService"; }
-# Prints the centre of the first view whose text or description is $1 (or contains it, with $2 = contains).
-find_view() {
-  # Remove the previous dump first: a failed dump must not leave a stale screen behind.
+UI="$OUT/ui.xml"
+# Saves what is on screen now to $UI. The old dump is removed first so a failed dump is not reused.
+dump_ui() {
   adb shell "rm -f /sdcard/ui.xml; uiautomator dump /sdcard/ui.xml" > /dev/null 2>&1
-  adb exec-out cat /sdcard/ui.xml | python3 -c '
+  adb exec-out cat /sdcard/ui.xml > "$UI" 2> /dev/null
+}
+# Prints the centre of the first view in $UI whose text or description is $1 (or contains it, with $2 = contains).
+view_xy() {
+  python3 -c '
 import re, sys
-xml, want, mode = sys.stdin.read(), sys.argv[1], sys.argv[2]
+xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+want, mode = sys.argv[2], sys.argv[3]
 for node in re.findall(r"<node [^>]*>", xml):
     text = re.search(r" text=\"([^\"]*)\"", node).group(1)
     desc = re.search(r" content-desc=\"([^\"]*)\"", node).group(1)
@@ -32,8 +37,22 @@ for node in re.findall(r"<node [^>]*>", xml):
         x1, y1, x2, y2 = map(int, re.search(r"bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"", node).groups())
         print((x1 + x2) // 2, (y1 + y2) // 2)
         break
-' "$1" "${2:-exact}"
+' "$UI" "$1" "${2:-exact}"
 }
+# The emulator's own launcher sometimes stalls on CI, and its "isn't responding" dialog then
+# covers everything; close it whenever a dump shows it.
+fresh_ui() {
+  dump_ui
+  if grep -qE "isn.{1,6}t responding" "$UI"; then
+    local xy
+    xy=$(view_xy "Close app")
+    [ -n "$xy" ] && adb shell input tap $xy
+    log "closed a system 'isn't responding' dialog" >&2 # stdout is the caller's answer
+    sleep 2
+    dump_ui
+  fi
+}
+find_view() { fresh_ui; view_xy "$@"; }
 on_screen() { [ -n "$(find_view "$@")" ]; }
 # Taps the view found by find_view; fails when there is none.
 tap_on() {
@@ -44,15 +63,18 @@ tap_on() {
 # Swipes up from y=$1 to y=$2 (pixels of the current display size).
 scroll_down() { adb shell input swipe 300 "${1:-1600}" 300 "${2:-600}" 400; sleep 1; }
 
-log "install"
-adb install -r app/build/outputs/apk/debug/app-debug.apk >> "$LOG" 2>&1
-adb shell settings put system screen_off_timeout 600000
-# The emulator's own launcher sometimes stalls on CI; keep its "isn't responding" dialog off the screenshots.
+# The emulator's own launcher sometimes stalls on CI: keep "isn't responding" dialogs away from
+# the start (they only stay hidden if this is set before they appear), and close one already up.
 adb shell settings put global hide_error_dialogs 1
 adb shell settings put secure anr_show_background 0
+adb shell settings put system screen_off_timeout 600000
 adb shell svc power stayon true
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell wm dismiss-keyguard
+fresh_ui
+
+log "install"
+adb install -r app/build/outputs/apk/debug/app-debug.apk >> "$LOG" 2>&1
 
 # ---------- Part 0: the first launch, nothing allowed yet ----------
 # Every "Разрешить" opens Android's own question or settings page; answer it the way a person would.
@@ -196,8 +218,7 @@ sleep 2
 shot 16-dreams
 tap_on "Сны"
 sleep 1
-adb shell uiautomator dump /sdcard/ui.xml > /dev/null
-adb exec-out cat /sdcard/ui.xml | grep -q "опаздываю на поезд" && DREAM_SAVED=yes || DREAM_SAVED=""
+on_screen "опаздываю на поезд" contains && DREAM_SAVED=yes || DREAM_SAVED=""
 log "dream in the journal: ${DREAM_SAVED:-NO}"
 
 # ---------- Part 5: large text, a small phone, a setting changing mid-dream ----------
@@ -234,12 +255,15 @@ scroll_down 1000 300
 shot 23b-small-night-lower
 
 log "the morning on the small phone: the alarm, then the dream screen"
+adb shell dumpsys activity activities | grep -q "sonnik.app.AlarmActivity" && log "the first alarm screen is still open"
 app --ei demo_alarm_in 2
 sleep 3
 adb shell input keyevent KEYCODE_SLEEP
 RANG2=""
 for i in $(seq 1 100); do
-  if adb shell dumpsys activity activities | grep -q "sonnik.app.AlarmActivity"; then RANG2="after ~$((i * 2)) s"; break; fi
+  if adb shell dumpsys activity activities | grep -E "topResumedActivity|mResumedActivity" | grep -q "AlarmActivity"; then
+    RANG2="after ~$((i * 2)) s"; break
+  fi
   sleep 2
 done
 log "second alarm: ${RANG2:-DID NOT RING}"
