@@ -81,7 +81,11 @@ fun DreamsScreen(onOpen: (Dream?) -> Unit) {
     var query by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { dreams = withContext(Dispatchers.IO) { DreamStore.list(ctx) } }
 
-    val shown = dreams.orEmpty().filter { DreamSearch.matches(it, query) }
+    // Read the state once, outside the list's content: reading it inside as well can give the
+    // lazy list two different snapshots (item count from one, keys from the other) while the
+    // journal is loading, which crashes with IndexOutOfBoundsException.
+    val list = dreams
+    val shown = list.orEmpty().filter { DreamSearch.matches(it, query) }
     LazyColumn(
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -94,7 +98,7 @@ fun DreamsScreen(onOpen: (Dream?) -> Unit) {
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                     shape = RoundedCornerShape(16.dp),
                 ) { Text("Записать сон", fontSize = 17.sp) }
-                if (!dreams.isNullOrEmpty()) {
+                if (!list.isNullOrEmpty()) {
                     OutlinedTextField(
                         value = query, onValueChange = { query = it },
                         modifier = Modifier.fillMaxWidth(),
@@ -104,7 +108,6 @@ fun DreamsScreen(onOpen: (Dream?) -> Unit) {
                 }
             }
         }
-        val list = dreams
         if (list != null && list.isEmpty()) item {
             Text(
                 "Записывайте сны сразу после пробуждения, пока они не забылись: голосом или текстом. " +
