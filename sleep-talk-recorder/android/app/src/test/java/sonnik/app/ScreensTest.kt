@@ -149,7 +149,8 @@ class ScreensTest {
         records()
         waitForText("Ночь на 9 октября")
         compose.onNodeWithText("Улица · собака · 3 с").assertExists()
-        compose.onNodeWithText("1 фраза · 2 звука", substring = true).assertExists()
+        // Both the overall summary and the night's header say it.
+        assertEquals(2, compose.onAllNodesWithText("1 фраза · 2 звука", substring = true).fetchSemanticsNodes().size)
         compose.onNodeWithText("Улица 1").performClick()
         compose.onNodeWithText("02:00:00").assertExists()
         compose.onNodeWithText("01:00:00").assertDoesNotExist()
