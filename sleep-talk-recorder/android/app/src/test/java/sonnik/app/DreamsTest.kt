@@ -13,7 +13,9 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ActivityScenario
@@ -125,8 +127,9 @@ class DreamScreensTest {
         compose.onNodeWithText("Записать сон").performClick()
         compose.onNodeWithText("Запомни сон").assertIsDisplayed()
         compose.onNode(hasSetTextAction() and hasText("Что снилось")).performTextInput("Я плыл по реке из молока")
-        compose.onNodeWithText("Тревожный").performScrollTo().performClick()
-        compose.onNodeWithText("Готово").performClick()
+        // Semantic clicks: the chip row scrolls sideways and may be partly off the narrow test screen.
+        compose.onNodeWithText("Тревожный").performSemanticsAction(SemanticsActions.OnClick)
+        compose.onNodeWithText("Готово").performSemanticsAction(SemanticsActions.OnClick)
         val saved = DreamStore.list(ctx).single()
         assertEquals("Я плыл по реке из молока", saved.text)
         assertEquals(DreamMood.ANXIOUS, saved.mood)
