@@ -138,7 +138,11 @@ private fun DreamCard(d: Dream, onClick: () -> Unit) {
                 }
             }
             Text(d.title, style = MaterialTheme.typography.titleMedium)
-            Text(d.text, maxLines = 3, overflow = TextOverflow.Ellipsis, color = Palette.muted)
+            // The rest of the dream after the first sentence, so the title is not repeated.
+            val rest = d.text.trim().removePrefix(d.title.removeSuffix("…")).trimStart('.', '!', '?', ',', ' ', '\n')
+            if (rest.isNotBlank() && !d.title.endsWith("…")) {
+                Text(rest, maxLines = 3, overflow = TextOverflow.Ellipsis, color = Palette.muted)
+            }
             if (d.notes.isNotBlank()) Text("Есть толкование", style = MaterialTheme.typography.labelSmall, color = Palette.amber)
         }
     }
