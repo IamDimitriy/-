@@ -12,10 +12,7 @@ LOG="$OUT/demo-log.txt"
 : > "$LOG"
 
 log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
-shot() {
-  adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS > /dev/null 2>&1
-  adb exec-out screencap -p > "$OUT/$1.png"; log "screenshot $1"
-}
+shot() { adb exec-out screencap -p > "$OUT/$1.png"; log "screenshot $1"; }
 app() { adb shell am start -n "$PKG/sonnik.app.MainActivity" "$@" > /dev/null; }
 service_running() { adb shell dumpsys activity services "$PKG" | grep -q "RecorderService"; }
 # Taps the centre of the first view whose text or description matches $1.
