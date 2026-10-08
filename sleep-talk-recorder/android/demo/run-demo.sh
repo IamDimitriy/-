@@ -12,7 +12,10 @@ LOG="$OUT/demo-log.txt"
 : > "$LOG"
 
 log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
-shot() { adb exec-out screencap -p > "$OUT/$1.png"; log "screenshot $1"; }
+shot() {
+  adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS > /dev/null 2>&1
+  adb exec-out screencap -p > "$OUT/$1.png"; log "screenshot $1"
+}
 app() { adb shell am start -n "$PKG/sonnik.app.MainActivity" "$@" > /dev/null; }
 service_running() { adb shell dumpsys activity services "$PKG" | grep -q "RecorderService"; }
 # Taps the centre of the first view whose text or description matches $1.
@@ -40,6 +43,9 @@ adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS
 adb shell appops set $PKG USE_FULL_SCREEN_INTENT allow || true
 adb shell dumpsys deviceidle whitelist +$PKG >> "$LOG"
 adb shell settings put system screen_off_timeout 600000
+# The emulator's own launcher sometimes stalls on CI; keep its "isn't responding" dialog off the screenshots.
+adb shell settings put global hide_error_dialogs 1
+adb shell settings put secure anr_show_background 0
 adb shell svc power stayon true
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell wm dismiss-keyguard

@@ -280,8 +280,8 @@ private fun share(ctx: Context, clip: Clip) {
 }
 
 /**
- * The night at a glance: one bar per minute, as tall as the minute was restless,
- * amber where you spoke, blue where you snored; dots mark the saved phrases.
+ * The night at a glance: one bar per minute, as tall as the minute was restless and blue
+ * where you snored; amber dots mark the saved phrases.
  */
 @Composable
 private fun NightTimeline(night: Night) {
@@ -302,11 +302,8 @@ private fun NightTimeline(night: Night) {
             drawLine(Palette.line, Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 1.dp.toPx())
             for (m in minutes) {
                 val bar = max(sqrt(m.activity.coerceIn(0.0, 1.0)).toFloat() * h, 1.5.dp.toPx())
-                val color = when {
-                    m.speechS >= 1.0 -> Palette.amber
-                    m.snoreS >= 10.0 -> Palette.snore
-                    else -> Palette.muted.copy(alpha = 0.55f)
-                }
+                // Phrases are the dots above; the bar colour shows snoring, which is easy to miss otherwise.
+                val color = if (m.snoreS >= 10.0) Palette.snore else Palette.muted.copy(alpha = 0.55f)
                 drawRect(color, Offset(m.index * w, size.height - bar), Size(max(w * 0.8f, 1f), bar))
             }
             for (cm in clipMinutes) {
@@ -318,7 +315,7 @@ private fun NightTimeline(night: Night) {
             Text(end.format(timeFmt), style = MaterialTheme.typography.labelSmall, color = Palette.muted)
         }
         Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Legend(Palette.amber, "речь")
+            Legend(Palette.amber, "фраза")
             Legend(Palette.snore, "храп")
             Legend(Palette.muted, "беспокойно")
         }
