@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -24,6 +25,7 @@ object Notifications {
     private const val CH_RECORDING = "recording"
     private const val CH_START = "start"
     private const val CH_INFO = "info"
+    private const val TAG = "Sonnik"
 
     private val hhmm = DateTimeFormatter.ofPattern("HH:mm")
     fun time(ms: Long): String = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).format(hhmm)
@@ -113,9 +115,11 @@ object Notifications {
             .setFullScreenIntent(wake, true)
             .setContentIntent(wake)
             .setAutoCancel(true)
-            .setSilent(true)
+            // No setSilent(): AndroidX puts "silent" notifications into a group that does not
+            // alert, and Android then refuses the full-screen launch. The channel is already silent.
             .setTimeoutAfter(60 * 60 * 1000L)
             .build()
+        Log.i(TAG, "Night start prompt posted")
         notify(ctx, START_ID, n)
     }
 

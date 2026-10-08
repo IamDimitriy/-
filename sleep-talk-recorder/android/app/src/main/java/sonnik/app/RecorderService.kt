@@ -79,8 +79,10 @@ class RecorderService : Service() {
             return
         }
 
+        Log.i(TAG, "Recording session: keep from ${plan.saveFrom}, stop at ${plan.stopAt}")
         val input = (inputFactory ?: ::defaultInput)(this, intent)
         if (!input.start()) {
+            Log.w(TAG, "Audio input did not start: $input")
             Notifications.problem(this, "Микрофон занят другим приложением. Запись не началась.")
             finishSession(0)
             return
@@ -167,6 +169,7 @@ class RecorderService : Service() {
             input.close()
         }
         val total = clips
+        Log.i(TAG, "Recording session ended, clips kept: $total")
         main.post { finishSession(total) }
     }
 

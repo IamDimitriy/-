@@ -46,8 +46,8 @@ adb shell wm dismiss-keyguard
 
 log "copy the demo night into the app"
 adb push demo/night.wav /data/local/tmp/night.wav > /dev/null
-adb shell "cat /data/local/tmp/night.wav | run-as $PKG sh -c 'cat > files/night.wav'"
-adb shell run-as $PKG ls -l files >> "$LOG"
+adb shell "cat /data/local/tmp/night.wav | run-as $PKG sh -c 'mkdir -p files && cat > files/night.wav'"
+adb shell run-as $PKG ls -l files >> "$LOG" 2>&1
 
 # ---------- Part 1: a night of sleep talk ----------
 app
@@ -85,7 +85,9 @@ shot 08-playing
 sleep 6
 wait $REC
 adb pull /sdcard/demo.mp4 "$OUT/demo.mp4" >> "$LOG" 2>&1
-adb shell run-as $PKG ls -lR files/nights >> "$LOG"
+adb shell run-as $PKG ls -lR files/nights >> "$LOG" 2>&1
+CLIPS=$(adb shell run-as $PKG sh -c 'ls files/nights/*/*.wav 2>/dev/null' | grep -c wav)
+log "clips kept from the demo night: $CLIPS (expected 3 phrases, snoring ignored)"
 
 # ---------- Part 2: automatic start with the screen off ----------
 log "schedule tonight two minutes from now, then lock the phone"
@@ -119,5 +121,11 @@ adb shell wm dismiss-keyguard
 app
 sleep 3
 shot 12-auto-recording
-adb logcat -d -s Sonnik:* ActivityManager:W >> "$OUT/logcat.txt" 2>&1
+adb logcat -d > "$OUT/logcat.txt" 2>&1
+grep -E "Sonnik|FullScreen|FSI|$PKG" "$OUT/logcat.txt" > "$OUT/logcat-app.txt"
 log "done"
+
+FAILED=0
+[ "$CLIPS" = 3 ] || { log "FAIL: expected 3 clips, got $CLIPS"; FAILED=1; }
+[ -n "$STARTED" ] || { log "FAIL: recording did not start by itself"; FAILED=1; }
+exit $FAILED

@@ -2,6 +2,7 @@ package sonnik.app
 
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -43,6 +44,7 @@ class WakeActivity : ComponentActivity() {
         super.onResume()
         if (started) return
         started = true
+        Log.i("Sonnik", "Wake screen shown, starting the recorder")
         Notifications.cancelStartPrompt(this)
         if (Recorder.state.value.phase == Phase.IDLE) Recorder.start(this, now = false)
         window.decorView.postDelayed({ finish() }, 1500)

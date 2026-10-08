@@ -2,6 +2,7 @@ package sonnik.app
 
 import android.Manifest
 import android.app.AlarmManager
+import android.app.Notification
 import android.app.Application
 import android.app.NotificationManager
 import android.content.Context
@@ -86,6 +87,10 @@ class SchedulerTest {
         val n = shadowOf(nm).allNotifications.single()
         assertNotNull(n.fullScreenIntent, "full-screen intent opens the app over the lock screen")
         assertEquals("start", n.channelId)
+        // Regression: a "silent" AndroidX notification lands in a non-alerting group, and
+        // Android then never launches the full-screen screen (seen on the emulator demo).
+        assertNull(n.group)
+        assertEquals(Notification.GROUP_ALERT_ALL, n.groupAlertBehavior)
     }
 
     @Test fun startChannelIsSilent() {

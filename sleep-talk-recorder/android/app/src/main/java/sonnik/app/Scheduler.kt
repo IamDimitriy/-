@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import java.time.LocalDateTime
 import java.time.ZoneId
 
@@ -60,6 +61,7 @@ class AlarmReceiver : BroadcastReceiver() {
         val skipped = prefs.skippedStart != null &&
             prefs.skippedStart == prefs.window.nextStart(LocalDateTime.now().minusMinutes(5))
         Scheduler.sync(ctx) // arm the next night
+        Log.i("Sonnik", "Night alarm: skipped=$skipped auto=${prefs.autoStart} phase=${Recorder.state.value.phase}")
         if (skipped || !prefs.autoStart) return
         if (Recorder.state.value.phase != Phase.IDLE) return // already listening
         Notifications.startPrompt(ctx)
