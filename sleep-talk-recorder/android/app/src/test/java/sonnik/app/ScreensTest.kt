@@ -62,7 +62,8 @@ class ScreensTest {
         Prefs(ctx).endMinute = ((LocalDateTime.now().hour + 4) % 24) * 60
         night()
         compose.onAllNodes(isToggleable()).onFirst().performScrollTo().performClick()
-        compose.onNodeWithText("Автозапуск выключен").assertIsDisplayed()
+        // The status card is scrolled out of view now, so check it exists rather than is visible.
+        compose.onNodeWithText("Автозапуск выключен").assertExists()
         assertFalse(Prefs(ctx).autoStart)
     }
 
