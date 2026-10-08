@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.After
@@ -60,7 +61,7 @@ class ScreensTest {
         Prefs(ctx).startMinute = (LocalDateTime.now().hour + 3) % 24 * 60
         Prefs(ctx).endMinute = ((LocalDateTime.now().hour + 4) % 24) * 60
         night()
-        compose.onAllNodes(isToggleable()).onFirst().performClick()
+        compose.onAllNodes(isToggleable()).onFirst().performScrollTo().performClick()
         compose.onNodeWithText("Автозапуск выключен").assertIsDisplayed()
         assertFalse(Prefs(ctx).autoStart)
     }
