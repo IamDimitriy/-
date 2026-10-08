@@ -2,6 +2,7 @@ package sonnik.app
 
 import android.content.Context
 import sonnik.core.NightWindow
+import java.time.LocalDateTime
 import java.time.LocalTime
 
 /** User settings, kept in SharedPreferences. */
@@ -28,6 +29,11 @@ class Prefs(context: Context) {
     var anySound: Boolean
         get() = sp.getBoolean("anySound", false)
         set(v) = sp.edit().putBoolean("anySound", v).apply()
+
+    /** Start of a night the user chose to skip (ISO date-time), or null. */
+    var skippedStart: LocalDateTime?
+        get() = sp.getString("skip", null)?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }
+        set(v) = sp.edit().putString("skip", v?.toString()).apply()
 
     val window: NightWindow
         get() = NightWindow(minuteToTime(startMinute), minuteToTime(endMinute))

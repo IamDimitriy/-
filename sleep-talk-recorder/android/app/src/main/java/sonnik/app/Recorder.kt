@@ -30,8 +30,9 @@ object Recorder {
     internal fun reset() { _state.value = RecorderState() }
 
     /** [now] = keep everything from this moment; otherwise wait for the night window to begin. */
-    fun start(ctx: Context, now: Boolean) {
+    fun start(ctx: Context, now: Boolean, demoWav: String? = null) {
         val i = Intent(ctx, RecorderService::class.java).putExtra(RecorderService.EXTRA_NOW, now)
+        if (demoWav != null) i.putExtra(RecorderService.EXTRA_DEMO_WAV, demoWav)
         ContextCompat.startForegroundService(ctx, i)
     }
 

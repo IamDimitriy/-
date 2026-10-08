@@ -46,7 +46,17 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    buildFeatures { compose = true }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            all { it.maxHeapSize = "2g" }
+        }
+    }
+
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 }
 
 kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_17) } }
@@ -62,4 +72,13 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.core:core-ktx:1.15.0")
+
+    testImplementation(composeBom)
+    testImplementation(kotlin("test"))
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("androidx.test:core-ktx:1.6.1")
+    testImplementation("androidx.test.ext:junit-ktx:1.2.1")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

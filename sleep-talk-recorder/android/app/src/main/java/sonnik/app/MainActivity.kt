@@ -19,13 +19,18 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Notifications.createChannels(this)
         Scheduler.sync(this)
-        if (intent.getBooleanExtra(EXTRA_RECORDS, false)) tab.intValue = 1
+        handle(intent)
         setContent { SonnikTheme { App(tab) } }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (intent.getBooleanExtra(EXTRA_RECORDS, false)) tab.intValue = 1
+        handle(intent)
+    }
+
+    private fun handle(intent: Intent) {
+        if (intent.hasExtra(EXTRA_RECORDS)) tab.intValue = if (intent.getBooleanExtra(EXTRA_RECORDS, false)) 1 else 0
+        if (BuildConfig.DEBUG) DemoHooks.handle(this, intent)
     }
 
     companion object {

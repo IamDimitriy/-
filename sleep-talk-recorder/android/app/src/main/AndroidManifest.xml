@@ -45,7 +45,7 @@
         <service
             android:name=".RecorderService"
             android:exported="false"
-            android:foregroundServiceType="microphone" />
+            android:foregroundServiceType="microphone|shortService" />
 
         <receiver
             android:name=".AlarmReceiver"

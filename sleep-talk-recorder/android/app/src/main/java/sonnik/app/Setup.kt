@@ -37,7 +37,7 @@ object Setup {
         if (autoStart && Build.VERSION.SDK_INT >= 34) list += SetupItem(
             "fullscreen", "Запуск поверх экрана блокировки",
             "Нужен, чтобы в начале ночи Сонник сам включил запись, пока телефон заблокирован.",
-            ctx.getSystemService(NotificationManager::class.java).canUseFullScreenIntent(),
+            runCatching { ctx.getSystemService(NotificationManager::class.java).canUseFullScreenIntent() }.getOrDefault(true),
         )
         if (autoStart && !Scheduler.canExact(ctx)) list += SetupItem(
             "alarm", "Точные будильники", "Чтобы запись начиналась ровно в назначенное время.", false,

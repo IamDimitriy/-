@@ -3,6 +3,7 @@ package sonnik.app
 import android.content.Context
 import android.content.Intent
 import android.media.MediaPlayer
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -127,7 +128,19 @@ fun RecordsScreen() {
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        item { Text("Записи", fontSize = 32.sp, fontWeight = FontWeight.SemiBold) }
+        item {
+            Column {
+                Text("Записи", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
+                if (!list.isNullOrEmpty()) {
+                    val total = list.sumOf { it.clips.size }
+                    val bytes = list.sumOf { n -> n.clips.sumOf { it.file.length() } }
+                    Text(
+                        "${list.size} ${plural(list.size, "ночь", "ночи", "ночей")} · ${phrases(total)} · ${megabytes(bytes)}",
+                        color = Palette.muted, style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        }
         if (list != null && list.isEmpty()) item {
             Text(
                 "Здесь появятся ночи. Каждая — список фраз со временем, которые можно послушать и отправить.",
@@ -193,7 +206,7 @@ private fun NightCard(
                         style = MaterialTheme.typography.bodySmall, color = Palette.muted,
                     )
                 }
-                if (!live) TextButton(onClick = onDeleteNight) { Text("Удалить", color = Palette.muted) }
+                if (!live) TextButton(onClick = onDeleteNight) { Text("Удалить ночь", color = Palette.muted) }
             }
             if (night.clips.isEmpty()) {
                 Text(
@@ -213,7 +226,11 @@ private fun NightCard(
 @Composable
 private fun ClipRow(clip: Clip, player: ClipPlayer, onShare: (Clip) -> Unit, onDelete: (Clip) -> Unit) {
     val playing = player.current == clip.file
-    Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+    Column(
+        Modifier
+            .clickable { player.toggle(clip.file) }
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             FilledTonalIconButton(onClick = { player.toggle(clip.file) }) {
                 Icon(if (playing) Glyphs.Pause else Glyphs.Play, if (playing) "Пауза" else "Слушать")

@@ -64,7 +64,7 @@ import java.time.LocalDateTime
 private const val SENS_SUM = 22
 
 @Composable
-fun NightScreen(onOpenRecords: () -> Unit) {
+fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
     val state by Recorder.state.collectAsStateWithLifecycle()
@@ -75,13 +75,21 @@ fun NightScreen(onOpenRecords: () -> Unit) {
     var sensitivity by remember { mutableFloatStateOf((SENS_SUM - prefs.threshold).toFloat()) }
     var anySound by remember { mutableStateOf(prefs.anySound) }
     var setup by remember { mutableStateOf(Setup.items(ctx, auto)) }
+    var skipped by remember { mutableStateOf(Scheduler.isTonightSkipped(ctx)) }
 
-    LifecycleResumeEffect(auto) {
-        setup = Setup.items(ctx, auto)
+    LifecycleResumeEffect(Unit) {
+        // Settings can change outside this screen (notification, another window), so re-read them.
+        auto = prefs.autoStart
+        start = prefs.startMinute
+        end = prefs.endMinute
+        anySound = prefs.anySound
+        sensitivity = (SENS_SUM - prefs.threshold).toFloat()
+        skipped = Scheduler.isTonightSkipped(ctx)
+        setup = Setup.items(ctx, prefs.autoStart)
         onPauseOrDispose { }
     }
     val now by produceState(LocalDateTime.now()) {
-        while (true) { value = LocalDateTime.now(); delay(15_000) }
+        while (liveClock) { delay(15_000); value = LocalDateTime.now() }
     }
 
     var askedPermission by remember { mutableStateOf<String?>(null) }
@@ -123,9 +131,15 @@ fun NightScreen(onOpenRecords: () -> Unit) {
         Text("Сонник", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
 
         StatusCard(
-            state = state, auto = auto, startMinute = start, endMinute = end, now = now,
+            state = state, auto = auto, skipped = skipped, startMinute = start, endMinute = end, now = now,
             onStartNow = ::startNow,
             onStop = { Recorder.stop(ctx) },
+            onCancelWaiting = {
+                // "Not tonight": also keep the midnight auto-start from switching it back on.
+                Recorder.stop(ctx)
+                if (auto) { Scheduler.skipTonight(ctx, true); skipped = true }
+            },
+            onSkip = { Scheduler.skipTonight(ctx, it); skipped = it },
             onOpenRecords = onOpenRecords,
         )
 
@@ -136,12 +150,13 @@ fun NightScreen(onOpenRecords: () -> Unit) {
             SettingRow("Включать само каждую ночь", "Телефон можно заблокировать и положить экраном вниз") {
                 Switch(checked = auto, onCheckedChange = {
                     auto = it; prefs.autoStart = it; Scheduler.sync(ctx); setup = Setup.items(ctx, it)
+                    skipped = Scheduler.isTonightSkipped(ctx)
                 })
             }
             HorizontalDivider()
             Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 TimeButton("Начало", start, Modifier.weight(1f)) {
-                    start = it; prefs.startMinute = it; Scheduler.sync(ctx)
+                    start = it; prefs.startMinute = it; prefs.skippedStart = null; Scheduler.sync(ctx); skipped = false
                 }
                 TimeButton("Конец", end, Modifier.weight(1f)) {
                     end = it; prefs.endMinute = it; Scheduler.sync(ctx)
@@ -186,11 +201,14 @@ fun NightScreen(onOpenRecords: () -> Unit) {
 private fun StatusCard(
     state: RecorderState,
     auto: Boolean,
+    skipped: Boolean,
     startMinute: Int,
     endMinute: Int,
     now: LocalDateTime,
     onStartNow: () -> Unit,
     onStop: () -> Unit,
+    onCancelWaiting: () -> Unit,
+    onSkip: (Boolean) -> Unit,
     onOpenRecords: () -> Unit,
 ) {
     val window = NightWindow(Prefs.minuteToTime(startMinute), Prefs.minuteToTime(endMinute))
@@ -230,7 +248,7 @@ private fun StatusCard(
                             "что прозвучит после ${Notifications.time(state.saveFrom)}.",
                         color = Palette.muted,
                     )
-                    OutlinedButton(onClick = onStop) { Text("Отменить") }
+                    OutlinedButton(onClick = onCancelWaiting) { Text("Не записывать эту ночь") }
                 }
                 Phase.IDLE -> {
                     val inWindow = window.contains(now)
@@ -241,6 +259,15 @@ private fun StatusCard(
                             Text("Нажмите, чтобы слушать до ${Prefs.format(endMinute)}.", color = Palette.muted)
                             Button(onClick = onStartNow) { Text("Начать запись") }
                         }
+                        auto && skipped -> {
+                            Text("Эту ночь пропускаю", style = MaterialTheme.typography.headlineSmall)
+                            Text(
+                                "Следующая запись начнётся сама ${dayWord(now, window.nextStart(next))} " +
+                                    "в ${Prefs.format(startMinute)}.",
+                                color = Palette.muted,
+                            )
+                            OutlinedButton(onClick = { onSkip(false) }) { Text("Всё-таки записать") }
+                        }
                         auto -> {
                             Text("Запись начнётся сама в ${Prefs.format(startMinute)}", style = MaterialTheme.typography.headlineSmall)
                             Text(
@@ -248,7 +275,10 @@ private fun StatusCard(
                                     "Поставьте телефон на зарядку рядом с кроватью и спите.",
                                 color = Palette.muted,
                             )
-                            OutlinedButton(onClick = onStartNow) { Text("Начать сейчас") }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = onStartNow) { Text("Начать сейчас") }
+                                TextButton(onClick = { onSkip(true) }) { Text("Пропустить ночь") }
+                            }
                         }
                         else -> {
                             Text("Автозапуск выключен", style = MaterialTheme.typography.headlineSmall)
@@ -262,7 +292,15 @@ private fun StatusCard(
     }
 }
 
-private fun until(now: LocalDateTime, at: LocalDateTime): String {
+internal fun dayWord(now: LocalDateTime, at: LocalDateTime): String =
+    when (Duration.between(now.toLocalDate().atStartOfDay(), at.toLocalDate().atStartOfDay()).toDays()) {
+        0L -> "сегодня"
+        1L -> "завтра"
+        2L -> "послезавтра"
+        else -> at.toLocalDate().toString()
+    }
+
+internal fun until(now: LocalDateTime, at: LocalDateTime): String {
     val m = Duration.between(now, at).toMinutes().coerceAtLeast(0)
     return when {
         m < 1 -> "Через минуту"

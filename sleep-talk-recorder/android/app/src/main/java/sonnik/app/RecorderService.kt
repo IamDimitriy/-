@@ -1,30 +1,28 @@
 package sonnik.app
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
+import androidx.annotation.VisibleForTesting
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import sonnik.core.Detector
 import sonnik.core.DetectorConfig
 import sonnik.core.Episode
+import sonnik.core.NightPlan
 import java.io.File
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
-import kotlin.math.max
 
 /**
  * Foreground service that owns the microphone for the night.
@@ -47,18 +45,21 @@ class RecorderService : Service() {
             if (worker == null) finishSession(0)
             return START_NOT_STICKY
         }
-        if (!running) begin(intent?.getBooleanExtra(EXTRA_NOW, false) ?: false)
+        if (!running) begin(intent)
         return START_NOT_STICKY
     }
 
-    private fun begin(now: Boolean) {
+    private fun begin(intent: Intent?) {
         val prefs = Prefs(this)
         val zone = ZoneId.systemDefault()
-        val nowDt = LocalDateTime.now()
-        val window = prefs.window
-        val saveFromDt = if (now || window.contains(nowDt)) nowDt else window.nextStart(nowDt)
-        val saveFrom = saveFromDt.atZone(zone).toInstant().toEpochMilli()
-        val stopAt = window.endFor(nowDt).atZone(zone).toInstant().toEpochMilli()
+        val plan = NightPlan.make(prefs.window, LocalDateTime.now(), intent?.getBooleanExtra(EXTRA_NOW, false) ?: false)
+        val saveFrom = plan.saveFrom.atZone(zone).toInstant().toEpochMilli()
+        val stopAt = plan.stopAt.atZone(zone).toInstant().toEpochMilli()
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            bailOut("Нет доступа к микрофону. Откройте Сонник и разрешите его.")
+            return
+        }
 
         Recorder.update {
             RecorderState(
@@ -67,19 +68,20 @@ class RecorderService : Service() {
                 stopAt = stopAt,
             )
         }
-
         val type = if (Build.VERSION.SDK_INT >= 30) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
         try {
             ServiceCompat.startForeground(this, Notifications.RECORDING_ID, Notifications.recording(this, Recorder.state.value), type)
         } catch (e: Exception) {
+            // Android refuses the microphone to a service started from the background.
             Log.w(TAG, "Cannot start foreground", e)
-            Notifications.problem(this, "Не получилось включить запись. Откройте Сонник и нажмите «Начать сейчас».")
             Recorder.reset()
-            stopSelf()
+            bailOut("Не получилось включить запись. Откройте Сонник и нажмите «Начать сейчас».")
             return
         }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            Notifications.problem(this, "Нет доступа к микрофону. Откройте Сонник и разрешите его.")
+
+        val input = (inputFactory ?: ::defaultInput)(this, intent)
+        if (!input.start()) {
+            Notifications.problem(this, "Микрофон занят другим приложением. Запись не началась.")
             finishSession(0)
             return
         }
@@ -93,65 +95,61 @@ class RecorderService : Service() {
             minSpeechRatio = if (prefs.anySound) 0.0 else 0.45,
         )
         running = true
-        worker = Thread({ listen(config, saveFrom, stopAt, saveFromDt) }, "sonnik-mic").also { it.start() }
+        worker = Thread({ listen(input, config, plan) }, "sonnik-mic").also { it.start() }
     }
 
-    @SuppressLint("MissingPermission") // checked in begin()
-    private fun listen(config: DetectorConfig, saveFrom: Long, stopAt: Long, nightStart: LocalDateTime) {
-        val minBuf = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        val rec = try {
-            // VOICE_RECOGNITION: no automatic gain or noise suppression, so the room floor stays honest.
-            AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, RATE, AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT, max(minBuf, RATE) * 2)
-        } catch (e: Exception) {
-            Log.w(TAG, "AudioRecord failed", e); null
+    /**
+     * A service started with startForegroundService must call startForeground, or Android
+     * kills the app. When recording is impossible, satisfy that with a short service and stop.
+     */
+    private fun bailOut(message: String) {
+        Notifications.problem(this, message)
+        runCatching {
+            val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE else 0
+            ServiceCompat.startForeground(this, Notifications.RECORDING_ID, Notifications.recording(this, RecorderState()), type)
         }
-        if (rec == null || rec.state != AudioRecord.STATE_INITIALIZED) {
-            rec?.release()
-            main.post {
-                Notifications.problem(this, "Микрофон занят другим приложением. Запись не началась.")
-                finishSession(0)
-            }
-            return
-        }
+        finishSession(0)
+    }
 
-        val detector = Detector(RATE, config)
+    private fun listen(input: AudioInput, config: DetectorConfig, plan: NightPlan) {
         val zone = ZoneId.systemDefault()
+        val rate = input.sampleRate
+        val detector = Detector(rate, config)
+        val saveFrom = plan.saveFrom.atZone(zone).toInstant().toEpochMilli()
+        val stopAt = plan.stopAt.atZone(zone).toInstant().toEpochMilli()
         var nightDir: File? = null
         var clips = 0
-        val buf = ShortArray(RATE / 10)
+        val buf = ShortArray(rate / 10)
         var lastUi = 0L
         var lastPhase = Recorder.state.value.phase
-
-        rec.startRecording()
         val streamStart = System.currentTimeMillis()
 
         fun keep(ep: Episode) {
             val at = streamStart + (ep.startS * 1000).toLong()
-            if (at + (ep.durationS * 1000).toLong() < saveFrom) return // still before the night window
-            val dir = nightDir ?: Nights.dirFor(this, nightStart).also { nightDir = it }
+            val start = LocalDateTime.ofInstant(Instant.ofEpochMilli(at), zone)
+            val end = start.plusNanos((ep.durationS * 1e9).toLong())
+            if (!plan.keeps(start, end)) return
+            val dir = nightDir ?: Nights.dirFor(this, plan.saveFrom).also { nightDir = it }
             runCatching {
-                Nights.save(dir, LocalDateTime.ofInstant(Instant.ofEpochMilli(at), zone), ep)
+                Nights.save(dir, start, ep)
                 clips++
                 Recorder.update { it.copy(clips = clips, lastClipAt = at) }
+                main.post { Notifications.refreshRecording(this) }
             }.onFailure { Log.w(TAG, "Save failed", it) }
         }
 
         try {
             while (running) {
-                val n = rec.read(buf, 0, buf.size)
-                if (n <= 0) {
-                    if (n < 0) Thread.sleep(100)
-                    continue
-                }
-                detector.process(buf, n).forEach(::keep)
+                val n = input.read(buf)
+                if (n < 0) break // file input ended
+                if (n > 0) detector.process(buf, n).forEach(::keep)
 
                 val now = System.currentTimeMillis()
                 if (now >= stopAt) break
                 if (now - lastUi >= 500) {
                     lastUi = now
                     val phase = if (now >= saveFrom) Phase.RECORDING else Phase.WAITING
-                    if (phase == Phase.RECORDING && nightDir == null) nightDir = Nights.dirFor(this, nightStart)
+                    if (phase == Phase.RECORDING && nightDir == null) nightDir = Nights.dirFor(this, plan.saveFrom)
                     val floor = detector.floorDb
                     val level = if (floor == null) 0f
                     else ((detector.lastDb - floor) / (config.thresholdDb * 2)).toFloat().coerceIn(0f, 1f)
@@ -163,9 +161,10 @@ class RecorderService : Service() {
                 }
             }
             detector.flush().forEach(::keep)
+        } catch (e: Exception) {
+            Log.w(TAG, "Recording failed", e)
         } finally {
-            runCatching { rec.stop() }
-            rec.release()
+            input.close()
         }
         val total = clips
         main.post { finishSession(total) }
@@ -191,7 +190,19 @@ class RecorderService : Service() {
     companion object {
         const val ACTION_STOP = "sonnik.STOP"
         const val EXTRA_NOW = "now"
-        private const val RATE = 16000
+        /** Debug builds only: name of a WAV file in the app's files dir to play instead of the mic. */
+        const val EXTRA_DEMO_WAV = "demo_wav"
         private const val TAG = "Sonnik"
+
+        /** Lets tests feed audio without a microphone. */
+        @VisibleForTesting
+        @Volatile
+        var inputFactory: ((Context, Intent?) -> AudioInput)? = null
+
+        private fun defaultInput(ctx: Context, intent: Intent?): AudioInput {
+            val demo = intent?.getStringExtra(EXTRA_DEMO_WAV)
+            if (BuildConfig.DEBUG && demo != null) return WavFileInput(File(ctx.filesDir, demo), realTime = true)
+            return MicInput()
+        }
     }
 }

@@ -17,11 +17,25 @@ object Scheduler {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
-    /** When the next night's recording will begin, or null if auto-start is off. */
-    fun nextStart(ctx: Context): LocalDateTime? {
+    /** Start of the next night the app should record by itself, or null if auto-start is off. */
+    fun nextStart(ctx: Context, now: LocalDateTime = LocalDateTime.now()): LocalDateTime? {
         val prefs = Prefs(ctx)
         if (!prefs.autoStart) return null
-        return prefs.window.nextStart(LocalDateTime.now().plusMinutes(1))
+        // "+1 minute": the alarm fires a minute before the start; from then on it is "tonight".
+        val start = prefs.window.nextStart(now.plusMinutes(1))
+        return if (start == prefs.skippedStart) prefs.window.nextStart(start) else start
+    }
+
+    /** Skip tonight's automatic start (or undo that with [skip] = false). */
+    fun skipTonight(ctx: Context, skip: Boolean) {
+        val prefs = Prefs(ctx)
+        prefs.skippedStart = if (skip) prefs.window.nextStart(LocalDateTime.now().plusMinutes(1)) else null
+        sync(ctx)
+    }
+
+    fun isTonightSkipped(ctx: Context, now: LocalDateTime = LocalDateTime.now()): Boolean {
+        val prefs = Prefs(ctx)
+        return prefs.skippedStart != null && prefs.skippedStart == prefs.window.nextStart(now.plusMinutes(1))
     }
 
     fun canExact(ctx: Context): Boolean {
@@ -42,9 +56,12 @@ object Scheduler {
 
 class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent) {
-        Scheduler.sync(ctx) // arm tomorrow
-        if (Recorder.state.value.phase != Phase.IDLE) return // already listening ("Ложусь спать")
-        if (!Prefs(ctx).autoStart) return
+        val prefs = Prefs(ctx)
+        val skipped = prefs.skippedStart != null &&
+            prefs.skippedStart == prefs.window.nextStart(LocalDateTime.now().minusMinutes(5))
+        Scheduler.sync(ctx) // arm the next night
+        if (skipped || !prefs.autoStart) return
+        if (Recorder.state.value.phase != Phase.IDLE) return // already listening
         Notifications.startPrompt(ctx)
     }
 }
@@ -53,5 +70,12 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent) {
         Notifications.createChannels(ctx)
         Scheduler.sync(ctx)
+        // Rebooted in the middle of the night: offer to carry on (a reboot stops the microphone).
+        val prefs = Prefs(ctx)
+        if (intent.action == Intent.ACTION_BOOT_COMPLETED && prefs.autoStart &&
+            prefs.window.contains(LocalDateTime.now()) && Recorder.state.value.phase == Phase.IDLE
+        ) {
+            Notifications.startPrompt(ctx)
+        }
     }
 }

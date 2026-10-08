@@ -69,8 +69,11 @@ object Notifications {
             else "Слушаю до ${time(s.stopAt)}"
         )
         .setContentText(
-            if (s.phase == Phase.WAITING) "Микрофон включён, сохранять буду только ночные фразы"
-            else "Сохраняю только то, что вы скажете"
+            when {
+                s.phase == Phase.WAITING -> "Микрофон включён, сохранять буду только ночные фразы"
+                s.clips == 0 -> "Сохраняю только то, что вы скажете"
+                else -> "Записано: ${phrases(s.clips)}, последняя в ${time(s.lastClipAt)}"
+            }
         )
         .setOngoing(true)
         .setSilent(true)
@@ -149,13 +152,17 @@ object Notifications {
     }
 }
 
-fun phrases(n: Int): String {
+fun phrases(n: Int): String = "$n ${plural(n, "фраза", "фразы", "фраз")}"
+
+fun plural(n: Int, one: String, few: String, many: String): String {
     val m10 = n % 10
     val m100 = n % 100
-    val word = when {
-        m10 == 1 && m100 != 11 -> "фраза"
-        m10 in 2..4 && m100 !in 12..14 -> "фразы"
-        else -> "фраз"
+    return when {
+        m10 == 1 && m100 != 11 -> one
+        m10 in 2..4 && m100 !in 12..14 -> few
+        else -> many
     }
-    return "$n $word"
 }
+
+/** "4,2 МБ" style size for the recordings summary. */
+fun megabytes(bytes: Long): String = "%.1f МБ".format(java.util.Locale("ru"), bytes / 1_048_576.0)
