@@ -49,6 +49,22 @@ class DetectorTest {
         assertEquals(1, runDetector(audio).size)
     }
 
+    @Test fun shortRealPhraseIsKept() {
+        // "Где мои ключи?" (espeak-ng, quiet, on room noise): the emulator demo used to drop it
+        // because it has only ~0.25 s of clearly voiced frames.
+        val r = Wav.Reader(javaClass.getResourceAsStream("/short-phrase.wav")!!)
+        val d = Detector(r.sampleRate)
+        val buf = ShortArray(1600)
+        val out = ArrayList<Episode>()
+        while (true) {
+            val n = r.read(buf)
+            if (n < 0) break
+            out += d.process(buf, n)
+        }
+        out += d.flush()
+        assertEquals(1, out.size)
+    }
+
     @Test fun anySoundModeKeepsSnoring() {
         val audio = cat(s.noise(10.0), s.noise(5.0) + s.snore(5.0), s.noise(10.0))
         assertEquals(1, runDetector(audio, cfg = DetectorConfig(minSpeechRatio = 0.0)).size)

@@ -13,7 +13,7 @@
     startWindow: 10,
     prerollS: 2,
     hangoverS: 2.5,
-    minActiveS: 0.4,
+    minActiveS: 0.25,
     maxEventS: 120,
     // Room silence = 20th percentile of frame levels over 30 s: a snore cannot mask the next words.
     floorWindowS: 30,

@@ -155,7 +155,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="доля энергии в речевом диапазоне 300–3400 Гц")
         g.add_argument("--any-sound", action="store_true",
                        help="писать любые громкие звуки, не только похожие на речь")
-        g.add_argument("--min-speech", type=float, default=0.4,
+        g.add_argument("--min-speech", type=float, default=0.25,
                        help="минимум секунд звука, чтобы сохранить эпизод")
         g.add_argument("--hangover", type=float, default=2.5,
                        help="сколько секунд тишины завершает эпизод")

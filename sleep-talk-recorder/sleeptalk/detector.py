@@ -28,7 +28,7 @@ class DetectorConfig:
     start_window: int = 10
     preroll_s: float = 2.0
     hangover_s: float = 2.5
-    min_active_s: float = 0.4
+    min_active_s: float = 0.25  # sleep talk is often one short word
     max_event_s: float = 120.0
     # Noise floor adaptation time constant, seconds.
     # Room silence = 20th percentile of frame levels over 30 s: a snore cannot mask the next words.

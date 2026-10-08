@@ -25,7 +25,8 @@ data class DetectorConfig(
     val startWindow: Int = 10,
     val prerollS: Double = 2.0,
     val hangoverS: Double = 2.5,
-    val minActiveS: Double = 0.4,
+    // Sleep talk is often one short word, so 0.25 s of speech is enough to keep a clip.
+    val minActiveS: Double = 0.25,
     val maxEventS: Double = 120.0,
     /**
      * The room's silence is the [floorPercentile] of frame levels over the last [floorWindowS].
