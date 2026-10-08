@@ -16,8 +16,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.sp
 
 /**
- * Shown for a moment over the lock screen at the start of the night. Being on screen is what
- * allows the microphone service to start; then it closes and the screen goes dark again.
+ * Shown for a moment over the lock screen at the start of the night, or after a tap on the Quick
+ * Settings tile ([SleepTile]). Being on screen is what allows the microphone service to start;
+ * then it closes and the screen goes dark again.
  */
 class WakeActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -46,7 +47,13 @@ class WakeActivity : ComponentActivity() {
         started = true
         Log.i("Sonnik", "Wake screen shown, starting the recorder")
         Notifications.cancelStartPrompt(this)
-        if (Recorder.state.value.phase == Phase.IDLE) Recorder.start(this, now = false)
+        // The tile means "from now on"; the midnight start waits for the night window.
+        val now = intent.getBooleanExtra(EXTRA_NOW, false)
+        if (Recorder.state.value.phase == Phase.IDLE) Recorder.start(this, now = now)
         window.decorView.postDelayed({ finish() }, 1500)
+    }
+
+    companion object {
+        const val EXTRA_NOW = "now"
     }
 }

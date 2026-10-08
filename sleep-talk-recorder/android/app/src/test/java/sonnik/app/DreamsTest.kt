@@ -2,6 +2,8 @@ package sonnik.app
 
 import android.Manifest
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import androidx.compose.runtime.mutableIntStateOf
@@ -127,7 +129,7 @@ class DreamScreensTest {
         compose.onNodeWithText("Записать сон").performClick()
         compose.onNodeWithText("Запомни сон").assertIsDisplayed()
         compose.onNode(hasSetTextAction() and hasText("Что снилось")).performTextInput("Я плыл по реке из молока")
-        // Semantic clicks: the chip row scrolls sideways and may be partly off the narrow test screen.
+        // Semantic clicks: the chips may be below the visible part of the small test screen.
         compose.onNodeWithText("Тревожный").performSemanticsAction(SemanticsActions.OnClick)
         compose.onNodeWithText("Готово").performSemanticsAction(SemanticsActions.OnClick)
         val saved = DreamStore.list(ctx).single()
@@ -135,6 +137,17 @@ class DreamScreensTest {
         assertEquals(DreamMood.ANXIOUS, saved.mood)
         assertEquals(TAB_DREAMS, tab.intValue)
         waitForText("Я плыл по реке из молока")
+    }
+
+    @Test fun typedDreamIsSavedWithoutPressingDone() {
+        app()
+        compose.onNodeWithText("Записать сон").performClick()
+        compose.onNode(hasSetTextAction() and hasText("Что снилось")).performTextInput("Я летал над морем")
+        // No "Готово": the editor saves by itself once typing pauses.
+        compose.mainClock.advanceTimeBy(2_000)
+        compose.waitUntil(5_000) { DreamStore.list(ctx).isNotEmpty() }
+        assertEquals("Я летал над морем", DreamStore.list(ctx).single().text)
+        compose.onNodeWithText("Запомни сон").assertIsDisplayed()
     }
 
     @Test fun dictationFillsTheText() {
@@ -178,6 +191,16 @@ class DreamScreensTest {
         assertTrue("Не предсказывай будущее" in text)
     }
 
+    @Test fun answerIsPastedFromTheClipboardAfterTheNotes() {
+        val d = DreamStore.new(text = "Я искал ключи").copy(notes = "Мои мысли")
+        editing.value = DreamEdit(d, listen = false)
+        app()
+        ctx.getSystemService(ClipboardManager::class.java)
+            .setPrimaryClip(ClipData.newPlainText("ответ", "Ключи могут означать поиск решения.\n"))
+        compose.onNodeWithText("Вставить ответ из буфера").performSemanticsAction(SemanticsActions.OnClick)
+        compose.onNode(hasSetTextAction() and hasText("Мои мысли\n\nКлючи могут означать поиск решения.")).assertExists()
+    }
+
     @Test fun searchFindsDreams() {
         DreamStore.save(ctx, Dream("a", LocalDateTime.parse("2026-10-08T07:00"), "Сон про море и чаек"))
         DreamStore.save(ctx, Dream("b", LocalDateTime.parse("2026-10-09T07:00"), "Сон про экзамен"))
@@ -211,5 +234,20 @@ class WakeUpToDreamTest {
         ActivityScenario.launch<MainActivity>(intent).use {
             compose.onNodeWithText("Запомни сон").assertIsDisplayed()
         }
+    }
+
+    @Test fun dreamBeingWrittenSurvivesTheActivityBeingRebuilt() {
+        val ctx = ApplicationProvider.getApplicationContext<Application>()
+        clean(ctx)
+        val intent = Intent(ctx, MainActivity::class.java).putExtra(MainActivity.EXTRA_NEW_DREAM, true)
+        ActivityScenario.launch<MainActivity>(intent).use { scenario ->
+            compose.onNode(hasSetTextAction() and hasText("Что снилось")).performTextInput("Мне снился кот на крыше")
+            // What a text size change or the dark theme switching at sunrise does.
+            scenario.recreate()
+            // The same dream reopened from its file, not a new empty one from the intent.
+            compose.onNodeWithText("Сон").assertIsDisplayed()
+            compose.onNode(hasSetTextAction() and hasText("Мне снился кот на крыше")).assertExists()
+        }
+        assertEquals(listOf("Мне снился кот на крыше"), DreamStore.list(ctx).map { it.text })
     }
 }

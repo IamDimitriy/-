@@ -9,10 +9,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -33,6 +34,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -45,17 +47,21 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import sonnik.core.Dream
 import sonnik.core.DreamMood
@@ -149,8 +155,10 @@ private fun DreamCard(d: Dream, onClick: () -> Unit) {
 
 /**
  * Writing a dream down. The mic button dictates into the text; the text stays editable.
- * Leaving the screen saves a non-empty dream.
+ * A non-empty dream saves itself a second after each change, when the app goes to the
+ * background and on leaving the screen: the phone may close the app at any of those moments.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DreamEditor(
     initial: Dream,
@@ -159,21 +167,39 @@ fun DreamEditor(
     onClose: () -> Unit,
 ) {
     val ctx = LocalContext.current
-    var text by remember { mutableStateOf(initial.text) }
+    val clipboard = LocalClipboardManager.current
+    // Saveable, so edits survive the screen being rebuilt (text size, dark theme at sunrise).
+    var text by rememberSaveable(initial.id) { mutableStateOf(initial.text) }
     var partial by remember { mutableStateOf("") }
-    var mood by remember { mutableStateOf(initial.mood) }
-    var notes by remember { mutableStateOf(initial.notes) }
+    var moodId by rememberSaveable(initial.id) { mutableStateOf(initial.mood?.id) }
+    var notes by rememberSaveable(initial.id) { mutableStateOf(initial.notes) }
     var listening by remember { mutableStateOf(false) }
     var problem by remember { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
+    /** Closed or deleted: nothing may save the dream after that. */
+    var closed by remember { mutableStateOf(false) }
     val night = remember(initial.id) { DreamStore.nightOf(ctx, initial) }
+    val mood = DreamMood.byId(moodId)
 
-    fun current() = initial.copy(text = text.trim(), mood = mood, notes = notes.trim())
+    // Reads the state when called: the pause callback below keeps the first composition's functions.
+    fun current() = initial.copy(text = text.trim(), mood = DreamMood.byId(moodId), notes = notes.trim())
+
+    // On the main thread, like close() and delete: a write still running on another thread
+    // could bring back a dream deleted a moment later. The file is small.
+    fun persist() {
+        if (closed) return
+        val d = current()
+        when {
+            d.text.isNotBlank() || d.notes.isNotBlank() -> DreamStore.save(ctx, d)
+            // A new dream autosaved and then erased again should not stay in the journal.
+            initial.text.isBlank() && initial.notes.isBlank() -> DreamStore.delete(ctx, d)
+        }
+    }
 
     fun close() {
         dictation.stop()
-        val d = current()
-        if (d.text.isNotBlank() || d.notes.isNotBlank()) DreamStore.save(ctx, d)
+        persist()
+        closed = true
         onClose()
     }
 
@@ -208,6 +234,15 @@ fun DreamEditor(
     LaunchedEffect(Unit) { if (autoListen && initial.text.isBlank()) toggleMic() }
     DisposableEffect(Unit) { onDispose { dictation.stop() } }
     BackHandler { close() }
+    // Autosave once typing or dictation pauses for a second.
+    LaunchedEffect(text, moodId, notes) {
+        delay(1_000)
+        persist()
+    }
+    // Leaving for another app (Claude, ChatGPT) or the screen being rebuilt.
+    LifecycleResumeEffect(Unit) {
+        onPauseOrDispose { persist() }
+    }
 
     Column(
         Modifier
@@ -222,7 +257,7 @@ fun DreamEditor(
                 Text(if (initial.text.isBlank()) "Запомни сон" else "Сон", fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
                 Text(initial.createdAt.format(dreamDay), color = Palette.muted)
             }
-            TextButton(onClick = ::close) { Text("Готово") }
+            FilledTonalButton(onClick = ::close) { Text("Готово") }
         }
 
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
@@ -245,7 +280,8 @@ fun DreamEditor(
                 },
                 color = Palette.muted, style = MaterialTheme.typography.bodyMedium,
             )
-            problem?.let { Text(it, color = Palette.danger, style = MaterialTheme.typography.bodySmall) }
+            // A hint about what to do instead, not an error.
+            problem?.let { Text(it, color = Palette.muted, style = MaterialTheme.typography.bodySmall) }
         }
 
         OutlinedTextField(
@@ -256,11 +292,12 @@ fun DreamEditor(
 
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Каким был сон", style = MaterialTheme.typography.bodySmall, color = Palette.muted)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Wraps on a narrow screen or with large text instead of cutting off "Кошмар".
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (m in DreamMood.entries) {
                     FilterChip(
                         selected = mood == m,
-                        onClick = { mood = if (mood == m) null else m },
+                        onClick = { moodId = if (mood == m) null else m.id },
                         label = { Text(m.title) },
                         leadingIcon = { Box(Modifier.size(8.dp).clip(CircleShape).background(moodColor(m))) },
                     )
@@ -287,7 +324,11 @@ fun DreamEditor(
                     color = Palette.muted, style = MaterialTheme.typography.bodySmall,
                 )
                 OutlinedButton(
-                    onClick = { shareForInterpretation(ctx, current(), DreamStore.factsOf(night)) },
+                    onClick = {
+                        // Saved first: the phone may close Сонник while the user reads the answer.
+                        persist()
+                        shareForInterpretation(ctx, current(), DreamStore.factsOf(night))
+                    },
                     enabled = text.isNotBlank(),
                 ) { Text("Толковать в Claude или ChatGPT") }
                 OutlinedTextField(
@@ -295,6 +336,13 @@ fun DreamEditor(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
                     label = { Text("Толкование и мысли") },
                 )
+                // The answer copied in Claude or ChatGPT, added after what is already written.
+                TextButton(onClick = {
+                    val answer = clipboard.getText()?.text?.trim().orEmpty()
+                    if (answer.isNotEmpty()) {
+                        notes = if (notes.isBlank()) answer else "${notes.trimEnd()}\n\n$answer"
+                    }
+                }) { Text("Вставить ответ из буфера") }
             }
         }
 
@@ -310,6 +358,7 @@ fun DreamEditor(
             text = { Text("Запись и толкование пропадут насовсем.") },
             confirmButton = {
                 TextButton(onClick = {
+                    closed = true
                     dictation.stop()
                     DreamStore.delete(ctx, initial)
                     confirmDelete = false

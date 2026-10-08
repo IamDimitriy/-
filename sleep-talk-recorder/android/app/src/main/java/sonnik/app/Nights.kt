@@ -10,6 +10,9 @@ import sonnik.core.Wav
 import java.io.File
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.util.Locale
+
+private val titleDay = DateTimeFormatter.ofPattern("d MMMM", Locale("ru"))
 
 data class Clip(
     val file: File,
@@ -25,8 +28,17 @@ data class Night(
     /** Minute-by-minute sound statistics; empty for nights recorded before they existed. */
     val minutes: List<Minute> = emptyList(),
 ) {
-    /** The morning this night belongs to: a night started at 23:30 on the 8th is "the night to the 9th". */
-    val morning get() = if (start.hour >= 12) start.toLocalDate().plusDays(1) else start.toLocalDate()
+    /**
+     * The date this sleep belongs to: a night started at 23:30 on the 8th is "the night to the 9th",
+     * one started at 01:00 on the 9th too; a nap at 16:00 on the 8th belongs to the 8th.
+     */
+    val morning get() = if (start.hour >= 18) start.toLocalDate().plusDays(1) else start.toLocalDate()
+
+    /** Started between 06:00 and 18:00: a nap or a test rather than a night. */
+    val daytime: Boolean get() = start.hour in 6..17
+
+    /** "Ночь на 9 октября", or "Днём, 8 октября" for a daytime session. */
+    val title: String get() = (if (daytime) "Днём, " else "Ночь на ") + morning.format(titleDay)
 
     val summary: NightSummary get() = NightSummary.of(minutes)
 
@@ -91,6 +103,13 @@ object Nights {
                 .sortedBy { it.at }
             Night(dir, start, clips, minutes(dir))
         }.sortedByDescending { it.start }
+
+    /**
+     * The nights worth a card: a session that saved nothing and stopped within minutes (a test
+     * start, say) is left out, though its files stay. The newest night is kept while it records.
+     */
+    fun shown(nights: List<Night>, recording: Boolean): List<Night> =
+        nights.filterIndexed { i, n -> n.clips.isNotEmpty() || n.minutes.size >= 5 || (recording && i == 0) }
 
     fun delete(clip: Clip) = clip.file.delete()
 

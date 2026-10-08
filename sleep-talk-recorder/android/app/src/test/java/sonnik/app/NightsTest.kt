@@ -50,6 +50,31 @@ class NightsTest {
         assertEquals(listOf(LocalDate.parse("2026-10-10"), LocalDate.parse("2026-10-09")), mornings)
     }
 
+    @Test fun daytimeSessionIsNotANight() {
+        fun night(start: String) = Night(File("x"), at(start), emptyList())
+        // A test started at 16:03 belongs to its own day, not to the next morning.
+        assertEquals(LocalDate.parse("2026-10-08"), night("2026-10-08T16:03").morning)
+        assertEquals("Днём, 8 октября", night("2026-10-08T16:03").title)
+        assertEquals("Днём, 9 октября", night("2026-10-09T06:00").title)
+        assertEquals("Ночь на 9 октября", night("2026-10-08T18:00").title)
+        assertEquals("Ночь на 9 октября", night("2026-10-08T23:30").title)
+        assertEquals("Ночь на 9 октября", night("2026-10-09T05:59").title)
+    }
+
+    @Test fun shortEmptySessionsAreLeftOutOfTheList() {
+        val test = Nights.dirFor(ctx, at("2026-10-08T16:03"))
+        repeat(3) { Nights.appendMinute(test, Minute(it, 0.0, 0.0, 0.0, 0.01)) }
+        val quiet = Nights.dirFor(ctx, at("2026-10-08T00:00"))
+        repeat(5) { Nights.appendMinute(quiet, Minute(it, 0.0, 0.0, 0.0, 0.01)) }
+        val short = Nights.dirFor(ctx, at("2026-10-07T00:00"))
+        Nights.save(short, at("2026-10-07T00:01:00"), ep(1.0))
+        val all = Nights.list(ctx)
+        assertEquals(listOf(at("2026-10-08T00:00"), at("2026-10-07T00:00")), Nights.shown(all, recording = false).map { it.start })
+        // The session being recorded right now stays, however short; nothing is deleted either way.
+        assertEquals(3, Nights.shown(all, recording = true).size)
+        assertTrue(test.exists())
+    }
+
     @Test fun newestNightComesFirst() {
         Nights.dirFor(ctx, at("2026-10-07T00:00"))
         Nights.dirFor(ctx, at("2026-10-09T00:00"))

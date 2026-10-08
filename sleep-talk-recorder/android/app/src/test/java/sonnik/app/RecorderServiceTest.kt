@@ -15,7 +15,12 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import sonnik.core.Episode
+import sonnik.core.Minute
+import sonnik.core.Retention
+import sonnik.core.SoundClass
 import sonnik.core.SoundKind
+import java.time.LocalDateTime
 import java.time.LocalTime
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -139,6 +144,40 @@ class RecorderServiceTest {
         assertTrue(night.summary.snoreMinutes >= 1, night.minutes.toString())
         assertEquals(listOf(SoundKind.SNORE), night.clips.map { it.sound.kind }, "one sample of the snoring")
         assertTrue(titles().any { it.startsWith("За ночь: 0 фраз · 1 звук · храп") }, titles().toString())
+    }
+
+    @Test fun afterTheNightOldSoundsAreDeletedButPhrasesAndGraphsStay() {
+        val old = LocalDateTime.now().minusDays(Retention.OTHER_DAYS + 5L).withSecond(0).withNano(0)
+        val oldDir = Nights.dirFor(ctx, old)
+        val ep = Episode(0.0, TestAudio.RATE, FloatArray(TestAudio.RATE), -40.0, 1.0)
+        val oldSnore = Nights.save(oldDir, old.plusMinutes(10), ep, SoundClass(SoundKind.SNORE))
+        val oldDoor = Nights.save(oldDir, old.plusMinutes(20), ep, SoundClass(SoundKind.MOVEMENT, "door"))
+        val oldPhrase = Nights.save(oldDir, old.plusMinutes(30), ep)
+        Nights.appendMinute(oldDir, Minute(0, 0.0, 30.0, 0.0, 0.1))
+        RecorderService.inputFactory = { _, _ -> FakeInput(TestAudio.night()) }
+        start(now = true)
+        waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
+        waitFor("cleanup") { !oldSnore.exists() && !oldDoor.exists() }
+        assertTrue(oldPhrase.exists())
+        val nights = Nights.list(ctx)
+        assertEquals(2, nights.size, "the old night stays in the list")
+        assertEquals(listOf(SoundKind.SPEECH, SoundKind.SNORE, SoundKind.SPEECH), nights[0].clips.map { it.sound.kind },
+            "tonight's clips are untouched")
+        assertEquals(listOf(SoundKind.SPEECH), nights[1].clips.map { it.sound.kind })
+        assertEquals(1, nights[1].minutes.size, "the graph keeps its data")
+    }
+
+    @Test fun cleanupKeepsTheLastMonthOfSounds() {
+        val now = LocalDateTime.now().withNano(0)
+        val monthAgo = now.minusDays(Retention.OTHER_DAYS.toLong())
+        val dir = Nights.dirFor(ctx, monthAgo.minusHours(4))
+        val ep = Episode(0.0, TestAudio.RATE, FloatArray(TestAudio.RATE), -40.0, 1.0)
+        val expired = Nights.save(dir, monthAgo.minusHours(1), ep, SoundClass(SoundKind.STREET, "car"))
+        val recent = Nights.save(dir, monthAgo.plusHours(1), ep, SoundClass(SoundKind.SNORE))
+        assertEquals(1, Cleanup.run(ctx, now))
+        assertTrue(!expired.exists())
+        assertTrue(recent.exists())
+        assertEquals(0, Cleanup.run(ctx, now))
     }
 
     /** Ten calm minutes, then three restless ones: the smart alarm should ring before its time. */

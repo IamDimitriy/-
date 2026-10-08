@@ -313,6 +313,6 @@ FAILED=0
 [ -n "$STARTED" ] || { log "FAIL: recording did not start by itself"; FAILED=1; }
 [ -n "$RANG" ] || { log "FAIL: the alarm did not ring"; FAILED=1; }
 [ -n "$DREAM_SAVED" ] || { log "FAIL: the dream was not saved"; FAILED=1; }
-# Findings to look at, not failures: the first launch and a dream written during a settings change.
-log "summary: first launch: $SETUP_STEPS setup steps, $SETUP_LEFT; mid-dream setting change: $MIDDREAM"
+case "$MIDDREAM" in *"dream saved") ;; *) log "FAIL: a dream being written was lost when a phone setting changed"; FAILED=1;; esac
+log "first launch: $SETUP_STEPS setup steps, $SETUP_LEFT"
 exit $FAILED

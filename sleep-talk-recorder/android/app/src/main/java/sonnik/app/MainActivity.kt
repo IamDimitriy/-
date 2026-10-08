@@ -11,7 +11,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 
 class MainActivity : ComponentActivity() {
-    /** 0 = night, 1 = recordings. Changed by the morning notification. */
+    /** TAB_NIGHT, TAB_RECORDS or TAB_DREAMS. Changed by the morning notification. */
     private val tab = mutableIntStateOf(0)
     private val editing = mutableStateOf<DreamEdit?>(null)
 
@@ -21,8 +21,24 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Notifications.createChannels(this)
         Scheduler.sync(this)
-        handle(intent)
+        // A rebuilt activity (text or display size, the dark theme switching at sunrise, the phone
+        // freeing memory) gets its first intent again: handling it twice would open an empty dream.
+        if (savedInstanceState == null) handle(intent) else restore(savedInstanceState)
         setContent { SonnikTheme { App(tab, editing) } }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt(STATE_TAB, tab.intValue)
+        editing.value?.let { outState.putString(STATE_DREAM, it.dream.id) }
+    }
+
+    /** Reopens the dream being written; the editor saved it when the app went to the background. */
+    private fun restore(state: Bundle) {
+        tab.intValue = state.getInt(STATE_TAB, tab.intValue)
+        val id = state.getString(STATE_DREAM) ?: return
+        // No file means the dream was still empty.
+        editing.value = DreamEdit(DreamStore.get(this, id) ?: DreamStore.new(), listen = false)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -46,5 +62,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_RECORDS = "records"
         const val EXTRA_NEW_DREAM = "new_dream"
+        private const val STATE_TAB = "tab"
+        private const val STATE_DREAM = "dream"
     }
 }

@@ -138,6 +138,7 @@ class ScreensTest {
         waitForText("храп 15 мин")
         compose.onNodeWithContentDescription("График ночи").assertIsDisplayed()
         compose.onNodeWithText("00:30").assertIsDisplayed()
+        compose.onNodeWithText("Ни одной записи за эту ночь.").assertExists()
     }
 
     @Test fun filterByKindOfSound() {
@@ -148,9 +149,17 @@ class ScreensTest {
         Nights.save(dir, LocalDateTime.parse("2026-10-09T03:00:00"), ep, SoundClass(SoundKind.SNORE))
         records()
         waitForText("Ночь на 9 октября")
-        compose.onNodeWithText("Улица · собака · 3 с").assertExists()
         // Both the overall summary and the night's header say it.
         assertEquals(2, compose.onAllNodesWithText("1 фраза · 2 звука", substring = true).fetchSemanticsNodes().size)
+        // The phrase is in sight; the other sounds wait behind one row.
+        compose.onNodeWithText("01:00:00").assertExists()
+        compose.onNodeWithText("Улица · собака · 3 с").assertDoesNotExist()
+        compose.onNodeWithText("Другие звуки · 2").performClick()
+        compose.onNodeWithText("Улица · собака · 3 с").assertExists()
+        compose.onNodeWithText("03:00:00").assertExists()
+        compose.onNodeWithText("Другие звуки · 2").performClick()
+        compose.onNodeWithText("03:00:00").assertDoesNotExist()
+        // A filter for one kind of sound shows its clips right away.
         compose.onNodeWithText("Улица 1").performClick()
         compose.onNodeWithText("02:00:00").assertExists()
         compose.onNodeWithText("01:00:00").assertDoesNotExist()
@@ -187,5 +196,38 @@ class ScreensTest {
         compose.waitForIdle()
         compose.waitUntil(5_000) { Nights.list(ctx).single().clips.size == 1 }
         assertEquals("04:00:10", Nights.list(ctx).single().clips.single().at.toLocalTime().toString())
+    }
+
+    @Test fun deletingAWholeNightFromItsMenu() {
+        val dir = Nights.dirFor(ctx, LocalDateTime.parse("2026-10-09T00:00"))
+        Nights.save(dir, LocalDateTime.parse("2026-10-09T03:12:45"), Episode(0.0, 16000, FloatArray(16000), -20.0, 1.0))
+        records()
+        waitForText("Ночь на 9 октября")
+        compose.onNodeWithText("Удалить ночь").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Ещё").performClick()
+        compose.onNodeWithText("Удалить ночь").performClick()
+        compose.onNodeWithText("Удалить ночь?").assertIsDisplayed()
+        compose.onNodeWithText("Удалить").performClick()
+        compose.waitUntil(5_000) { Nights.list(ctx).isEmpty() }
+    }
+
+    @Test fun daytimeSessionIsNotCalledANight() {
+        val dir = Nights.dirFor(ctx, LocalDateTime.parse("2026-10-08T16:03"))
+        Nights.save(dir, LocalDateTime.parse("2026-10-08T16:05:00"), Episode(0.0, 16000, FloatArray(16000), -20.0, 1.0))
+        records()
+        waitForText("Днём, 8 октября")
+        compose.onNodeWithText("Ночь на 9 октября").assertDoesNotExist()
+    }
+
+    @Test fun shortEmptySessionIsHidden() {
+        val test = Nights.dirFor(ctx, LocalDateTime.parse("2026-10-08T16:03"))
+        repeat(3) { Nights.appendMinute(test, Minute(it, 0.0, 0.0, 0.0, 0.01)) }
+        val dir = Nights.dirFor(ctx, LocalDateTime.parse("2026-10-09T00:00"))
+        Nights.save(dir, LocalDateTime.parse("2026-10-09T03:12:45"), Episode(0.0, 16000, FloatArray(16000), -20.0, 1.0))
+        records()
+        waitForText("Ночь на 9 октября")
+        compose.onNodeWithText("1 ночь · 1 фраза", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Днём", substring = true).assertDoesNotExist()
+        assertTrue(test.exists())
     }
 }

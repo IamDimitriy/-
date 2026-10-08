@@ -35,10 +35,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -54,6 +57,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -129,7 +133,7 @@ fun RecordsScreen() {
     /** Show only one kind of sound, or everything when null. */
     var filter by remember { mutableStateOf<SoundKind?>(null) }
 
-    LaunchedEffect(version, rec.clips, rec.sounds) {
+    LaunchedEffect(version, rec.clips, rec.sounds, rec.phase) {
         nights = withContext(Dispatchers.IO) { Nights.list(ctx) }
     }
     LifecycleResumeEffect(Unit) {
@@ -141,7 +145,10 @@ fun RecordsScreen() {
     }
     DisposableEffect(Unit) { onDispose { player.stop() } }
 
-    val all = nights
+    val recording = rec.phase == Phase.RECORDING
+    val all = nights?.let { Nights.shown(it, recording) }
+    /** The night being recorded now is the newest one. */
+    val liveDir = if (recording) all?.firstOrNull()?.dir else null
     val list = all?.let { ns ->
         if (filter == null) ns
         else ns.map { n -> n.copy(clips = n.clips.filter { it.sound.kind == filter }) }.filter { it.clips.isNotEmpty() }
@@ -191,11 +198,13 @@ fun RecordsScreen() {
         items(list.orEmpty(), key = { it.dir.name }) { night ->
             NightCard(
                 night = night,
-                live = rec.phase == Phase.RECORDING && night == list?.firstOrNull(),
+                live = night.dir == liveDir,
+                showOthers = filter != null && filter != SoundKind.SPEECH,
                 player = player,
                 onShare = { share(ctx, it) },
                 onDeleteClip = { pending = PendingDelete.OneClip(it) },
-                onDeleteNight = { pending = PendingDelete.WholeNight(night) },
+                // The whole night goes, not only the clips the filter shows.
+                onDeleteNight = { pending = PendingDelete.WholeNight(all?.firstOrNull { it.dir == night.dir } ?: night) },
             )
         }
     }
@@ -230,16 +239,26 @@ fun RecordsScreen() {
 private fun NightCard(
     night: Night,
     live: Boolean,
+    /** A filter for one kind of sound other than speech is on, so its clips are shown right away. */
+    showOthers: Boolean,
     player: ClipPlayer,
     onShare: (Clip) -> Unit,
     onDeleteClip: (Clip) -> Unit,
     onDeleteNight: () -> Unit,
 ) {
+    // Phrases come first. A night can also hold dozens of snoring samples, creaks and street
+    // noises; they wait behind one row so they do not bury the phrases.
+    val speech = night.clips.filter { it.sound.kind == SoundKind.SPEECH }
+    val others = night.clips.filter { it.sound.kind != SoundKind.SPEECH }
+    var othersOpen by rememberSaveable(night.dir.name) { mutableStateOf(false) }
     Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Palette.panel)) {
         Column(Modifier.fillMaxWidth().padding(vertical = 16.dp)) {
-            Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.Bottom) {
+            Row(
+                Modifier.padding(start = 20.dp, end = if (live) 20.dp else 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Ночь на ${night.morning.format(dayFmt)}", style = MaterialTheme.typography.titleMedium)
+                    Text(night.title, style = MaterialTheme.typography.titleMedium)
                     val sum = night.summary
                     Text(
                         "с ${night.start.format(timeFmt)} · " +
@@ -250,21 +269,66 @@ private fun NightCard(
                         style = MaterialTheme.typography.bodySmall, color = Palette.muted,
                     )
                 }
-                if (!live) TextButton(onClick = onDeleteNight) { Text("Удалить ночь", color = Palette.muted) }
+                if (!live) NightMenu(onDeleteNight)
             }
             if (night.minutes.size >= 2) NightTimeline(night)
             if (night.clips.isEmpty()) {
                 Text(
-                    if (live) "Пока тишина." else "Ни одной фразы. Если вы точно говорили, прибавьте чувствительность.",
+                    if (live) "Пока тишина." else "Ни одной записи за эту ночь.",
                     color = Palette.muted, style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
                 )
             }
-            night.clips.forEachIndexed { i, clip ->
-                if (i > 0) HorizontalDivider(Modifier.padding(start = 76.dp))
-                ClipRow(clip, player, onShare, onDeleteClip)
+            ClipList(speech, player, onShare, onDeleteClip)
+            if (showOthers) {
+                ClipList(others, player, onShare, onDeleteClip)
+            } else if (others.isNotEmpty()) {
+                if (speech.isNotEmpty()) HorizontalDivider(Modifier.padding(horizontal = 20.dp))
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { othersOpen = !othersOpen }
+                        .padding(horizontal = 20.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Другие звуки · ${others.size}", Modifier.weight(1f),
+                        color = Palette.muted, style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        if (othersOpen) "Скрыть" else "Показать",
+                        color = Palette.amber, style = MaterialTheme.typography.labelLarge,
+                    )
+                }
+                if (othersOpen) ClipList(others, player, onShare, onDeleteClip)
             }
         }
+    }
+}
+
+/** Deleting a whole night is rare and final, so it waits in a menu away from the title. */
+@Composable
+private fun NightMenu(onDeleteNight: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) { Icon(Icons.Filled.MoreVert, "Ещё", tint = Palette.muted) }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text("Удалить ночь") },
+                onClick = {
+                    open = false
+                    onDeleteNight()
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ClipList(clips: List<Clip>, player: ClipPlayer, onShare: (Clip) -> Unit, onDelete: (Clip) -> Unit) {
+    clips.forEachIndexed { i, clip ->
+        if (i > 0) HorizontalDivider(Modifier.padding(start = 76.dp))
+        ClipRow(clip, player, onShare, onDelete)
     }
 }
 
@@ -352,7 +416,7 @@ private fun NightTimeline(night: Night) {
             Text(end.format(timeFmt), style = MaterialTheme.typography.labelSmall, color = Palette.muted)
         }
         Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Legend(Palette.amber, "записи")
+            Legend(Palette.amber, "речь")
             Legend(Palette.snore, "храп")
             Legend(Palette.muted, "беспокойно")
         }

@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -39,10 +40,14 @@ fun App(
         // Full screen, without the tab bar: the first thing seen after waking up.
         Scaffold(containerColor = Palette.ink) { padding ->
             Box(Modifier.padding(padding)) {
-                DreamEditor(edit.dream, dict, autoListen = edit.listen, onClose = {
-                    editing.value = null
-                    tab.intValue = TAB_DREAMS
-                })
+                // One editor per dream: a dream opened over another one (the morning alarm) gets a
+                // fresh editor, and the one it replaces saves itself on leaving.
+                key(edit.dream.id) {
+                    DreamEditor(edit.dream, dict, autoListen = edit.listen, onClose = {
+                        editing.value = null
+                        tab.intValue = TAB_DREAMS
+                    })
+                }
             }
         }
         return

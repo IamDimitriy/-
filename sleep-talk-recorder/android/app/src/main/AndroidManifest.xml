@@ -73,6 +73,21 @@
             android:exported="false"
             android:foregroundServiceType="microphone|shortService" />
 
+        <!-- Quick Settings tile: start or stop the sleep recording from the notification shade. -->
+        <service
+            android:name=".SleepTile"
+            android:exported="true"
+            android:icon="@drawable/ic_notification"
+            android:label="Сонник"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+        </service>
+
         <receiver
             android:name=".AlarmReceiver"
             android:exported="false" />

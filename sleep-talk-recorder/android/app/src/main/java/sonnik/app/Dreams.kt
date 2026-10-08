@@ -29,24 +29,33 @@ object DreamStore {
         tmp.renameTo(f)
     }
 
+    private fun read(f: File): Dream? = runCatching {
+        val j = JSONObject(f.readText())
+        Dream(
+            id = j.getString("id"),
+            createdAt = LocalDateTime.parse(j.getString("createdAt")),
+            text = j.optString("text"),
+            mood = DreamMood.byId(if (j.isNull("mood")) null else j.optString("mood")),
+            notes = j.optString("notes"),
+        )
+    }.getOrNull()
+
     fun list(ctx: Context): List<Dream> =
-        dir(ctx).listFiles { f -> f.name.endsWith(".json") }.orEmpty().mapNotNull { f ->
-            runCatching {
-                val j = JSONObject(f.readText())
-                Dream(
-                    id = j.getString("id"),
-                    createdAt = LocalDateTime.parse(j.getString("createdAt")),
-                    text = j.optString("text"),
-                    mood = DreamMood.byId(if (j.isNull("mood")) null else j.optString("mood")),
-                    notes = j.optString("notes"),
-                )
-            }.getOrNull()
-        }.sortedByDescending { it.createdAt }
+        dir(ctx).listFiles { f -> f.name.endsWith(".json") }.orEmpty()
+            .mapNotNull { read(it) }
+            .sortedByDescending { it.createdAt }
+
+    /** One dream, or null when it was never saved (it was still empty). */
+    fun get(ctx: Context, id: String): Dream? =
+        File(dir(ctx), "$id.json").takeIf { it.exists() }?.let { read(it) }
 
     fun delete(ctx: Context, d: Dream) = File(dir(ctx), "${d.id}.json").delete()
 
-    /** What was recorded the night before this dream's morning, if anything. */
-    fun nightOf(ctx: Context, d: Dream): Night? = Nights.list(ctx).firstOrNull { it.morning == d.morning }
+    /** What was recorded the night before this dream's morning, if anything; a nap that day comes second. */
+    fun nightOf(ctx: Context, d: Dream): Night? {
+        val sameDay = Nights.list(ctx).filter { it.morning == d.morning }
+        return sameDay.firstOrNull { !it.daytime } ?: sameDay.firstOrNull()
+    }
 
     fun factsOf(night: Night?): NightFacts? =
         night?.let { NightFacts(it.phrases, it.sounds, it.summary.snoreMinutes) }

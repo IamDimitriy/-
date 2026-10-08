@@ -24,7 +24,9 @@ import sonnik.core.Episode
 import sonnik.core.Minute
 import sonnik.core.NightPlan
 import sonnik.core.NightSummary
+import sonnik.core.Retention
 import sonnik.core.SmartWake
+import sonnik.core.trimmedTo
 import java.io.File
 import java.time.Instant
 import java.time.LocalDateTime
@@ -95,6 +97,7 @@ class RecorderService : Service() {
             bailOut("Не получилось включить запись. Откройте Сонник и нажмите «Начать сейчас».")
             return
         }
+        SleepTile.update(this)
 
         Log.i(TAG, "Recording session: keep from ${plan.saveFrom}, stop at ${plan.stopAt}")
         val input = (inputFactory ?: ::defaultInput)(this, intent)
@@ -185,7 +188,9 @@ class RecorderService : Service() {
                 runCatching {
                     val sound = classifier.classify(ep.audio, ep.sampleRate)
                     if (!policy.keep(sound.kind, start)) return@runCatching
-                    Nights.save(dir, start, ep, sound)
+                    // Phrases are saved whole; for other sounds the start is enough and saves space.
+                    val clip = if (sound.kind == SoundKind.SPEECH) ep else ep.trimmedTo(Retention.OTHER_MAX_S)
+                    Nights.save(dir, start, clip, sound)
                     if (sound.kind == SoundKind.SPEECH) {
                         val n = phrases.incrementAndGet()
                         Recorder.update { it.copy(clips = n, lastClipAt = at) }
@@ -249,6 +254,10 @@ class RecorderService : Service() {
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         if (clips > 0 || sounds > 0 || snoreMinutes > 0) Notifications.morning(this, clips, sounds, snoreMinutes)
         Scheduler.sync(this)
+        SleepTile.update(this)
+        // Old sound clips are removed once a night, off the main thread (it reads every night's folder).
+        val app = applicationContext
+        Thread({ runCatching { Cleanup.run(app) }.onFailure { Log.w(TAG, "Cleanup failed", it) } }, "sonnik-cleanup").start()
         stopSelf()
     }
 
