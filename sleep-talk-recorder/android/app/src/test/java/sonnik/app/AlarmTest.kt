@@ -121,5 +121,8 @@ class AlarmScreenTest {
         compose.onNodeWithText("Выключить").performClick()
         compose.waitForIdle()
         assertTrue(compose.activity.isFinishing)
+        // Awake now: the dream journal opens to write the dream down.
+        val next = shadowOf(compose.activity).nextStartedActivity
+        assertTrue(next.getBooleanExtra(MainActivity.EXTRA_NEW_DREAM, false))
     }
 }

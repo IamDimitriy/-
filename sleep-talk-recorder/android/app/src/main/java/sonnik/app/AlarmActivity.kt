@@ -48,7 +48,8 @@ class AlarmActivity : ComponentActivity() {
                     smart = smart, clips = s.clips, snoreMinutes = s.snoreMinutes,
                     onDismiss = {
                         Alarm.dismiss(this)
-                        startActivity(Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_RECORDS, true))
+                        // Awake now: the best moment to write the dream down.
+                        startActivity(Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_NEW_DREAM, true))
                         finish()
                     },
                     onSnooze = { Alarm.snooze(this); finish() },

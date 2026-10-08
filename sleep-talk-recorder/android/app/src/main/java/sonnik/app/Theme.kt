@@ -85,6 +85,16 @@ object Glyphs {
         }
     }
 
+    val Cloud = icon("cloud") {
+        path(fill = SolidColor(Color.White)) {
+            moveTo(7f, 18f)
+            arcTo(4f, 4f, 0f, isMoreThanHalf = true, isPositiveArc = true, x1 = 7.6f, y1 = 10.05f)
+            arcTo(5.5f, 5.5f, 0f, isMoreThanHalf = false, isPositiveArc = true, x1 = 18.2f, y1 = 11.2f)
+            arcTo(3.4f, 3.4f, 0f, isMoreThanHalf = true, isPositiveArc = true, x1 = 17.5f, y1 = 18f)
+            close()
+        }
+    }
+
     val Play = icon("play") {
         path(fill = SolidColor(Color.White)) {
             moveTo(8f, 5f); lineTo(19f, 12f); lineTo(8f, 19f); close()

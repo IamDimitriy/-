@@ -184,6 +184,15 @@ object Notifications {
             .setContentTitle("За ночь: ${phrases(clips)}$snore")
             .setContentText("Нажмите, чтобы послушать")
             .setContentIntent(openApp(ctx, records = true))
+            .addAction(
+                0, "Записать сон",
+                PendingIntent.getActivity(
+                    ctx, 12,
+                    Intent(ctx, MainActivity::class.java).putExtra(MainActivity.EXTRA_NEW_DREAM, true)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                ),
+            )
             .setAutoCancel(true)
             .build()
         notify(ctx, MORNING_ID, n)

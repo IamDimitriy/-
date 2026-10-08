@@ -149,6 +149,23 @@ tap_on "Выключить"
 sleep 3
 shot 14-after-alarm
 
+# ---------- Part 4: the dream journal ----------
+log "write a dream down (typed in for the demo)"
+adb shell input keyevent KEYCODE_BACK
+sleep 1
+adb shell am start -n "$PKG/sonnik.app.MainActivity" --ez new_dream true \
+  --es demo_dream_text "'Мне снилось, что я опаздываю на поезд, а вокзал превращается в мою старую школу. Я ищу нужный класс, но все двери заперты.'" > /dev/null
+sleep 3
+shot 15-dream
+tap_on "Готово"
+sleep 2
+shot 16-dreams
+tap_on "Сны"
+sleep 1
+adb shell uiautomator dump /sdcard/ui.xml > /dev/null
+adb exec-out cat /sdcard/ui.xml | grep -q "опаздываю на поезд" && DREAM_SAVED=yes || DREAM_SAVED=""
+log "dream in the journal: ${DREAM_SAVED:-NO}"
+
 adb logcat -d > "$OUT/logcat.txt" 2>&1
 grep -E "Sonnik|FullScreen|FSI|$PKG" "$OUT/logcat.txt" > "$OUT/logcat-app.txt"
 log "done"
@@ -158,4 +175,5 @@ FAILED=0
 [ "$SNORES" -ge 1 ] || { log "FAIL: snoring was not saved as its own kind"; FAILED=1; }
 [ -n "$STARTED" ] || { log "FAIL: recording did not start by itself"; FAILED=1; }
 [ -n "$RANG" ] || { log "FAIL: the alarm did not ring"; FAILED=1; }
+[ -n "$DREAM_SAVED" ] || { log "FAIL: the dream was not saved"; FAILED=1; }
 exit $FAILED

@@ -8,10 +8,12 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 
 class MainActivity : ComponentActivity() {
     /** 0 = night, 1 = recordings. Changed by the morning notification. */
     private val tab = mutableIntStateOf(0)
+    private val editing = mutableStateOf<DreamEdit?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // The app is always dark, so system bar icons stay light whatever the phone's theme.
@@ -20,7 +22,7 @@ class MainActivity : ComponentActivity() {
         Notifications.createChannels(this)
         Scheduler.sync(this)
         handle(intent)
-        setContent { SonnikTheme { App(tab) } }
+        setContent { SonnikTheme { App(tab, editing) } }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -29,11 +31,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handle(intent: Intent) {
-        if (intent.hasExtra(EXTRA_RECORDS)) tab.intValue = if (intent.getBooleanExtra(EXTRA_RECORDS, false)) 1 else 0
+        if (intent.hasExtra(EXTRA_RECORDS)) {
+            tab.intValue = if (intent.getBooleanExtra(EXTRA_RECORDS, false)) TAB_RECORDS else TAB_NIGHT
+        }
+        if (intent.getBooleanExtra(EXTRA_NEW_DREAM, false)) {
+            // Straight after waking: open a new dream and start listening.
+            val text = if (BuildConfig.DEBUG) intent.getStringExtra("demo_dream_text").orEmpty() else ""
+            editing.value = DreamEdit(DreamStore.new(text = text), listen = text.isEmpty())
+            intent.removeExtra(EXTRA_NEW_DREAM)
+        }
         if (BuildConfig.DEBUG) DemoHooks.handle(this, intent)
     }
 
     companion object {
         const val EXTRA_RECORDS = "records"
+        const val EXTRA_NEW_DREAM = "new_dream"
     }
 }
