@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Scripted demo on an Android emulator (run from sleep-talk-recorder/android).
+#  0. The first launch, before anything is allowed: walks the "Чтобы всё работало само" card.
 #  1. Records a prepared "night" (demo/night.wav played instead of the mic): three phrases and snoring.
 #  2. Checks the automatic start: schedules the night two minutes ahead, turns the screen off
 #     and waits for the app to switch the microphone on by itself.
+#  3. The alarm over the lock screen.  4. A dream written down after waking.
+#  5. Large text and a small phone; a phone setting changing while a dream is being written.
 # Screenshots, a screen recording and a log go to demo-out/.
 set -u
 PKG=io.github.iamdimitriy.sonnik
@@ -15,30 +18,34 @@ log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
 shot() { adb exec-out screencap -p > "$OUT/$1.png"; log "screenshot $1"; }
 app() { adb shell am start -n "$PKG/sonnik.app.MainActivity" "$@" > /dev/null; }
 service_running() { adb shell dumpsys activity services "$PKG" | grep -q "RecorderService"; }
-# Taps the centre of the first view whose text or description matches $1.
-tap_on() {
-  adb shell uiautomator dump /sdcard/ui.xml > /dev/null
-  local xy
-  xy=$(adb exec-out cat /sdcard/ui.xml | python3 -c '
+# Prints the centre of the first view whose text or description is $1 (or contains it, with $2 = contains).
+find_view() {
+  # Remove the previous dump first: a failed dump must not leave a stale screen behind.
+  adb shell "rm -f /sdcard/ui.xml; uiautomator dump /sdcard/ui.xml" > /dev/null 2>&1
+  adb exec-out cat /sdcard/ui.xml | python3 -c '
 import re, sys
-xml, want = sys.stdin.read(), sys.argv[1]
+xml, want, mode = sys.stdin.read(), sys.argv[1], sys.argv[2]
 for node in re.findall(r"<node [^>]*>", xml):
     text = re.search(r" text=\"([^\"]*)\"", node).group(1)
     desc = re.search(r" content-desc=\"([^\"]*)\"", node).group(1)
-    if want in (text, desc):
+    if want in (text, desc) or (mode == "contains" and (want in text or want in desc)):
         x1, y1, x2, y2 = map(int, re.search(r"bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"", node).groups())
         print((x1 + x2) // 2, (y1 + y2) // 2)
         break
-' "$1")
-  if [ -n "$xy" ]; then adb shell input tap $xy; log "tap '$1' at $xy"; else log "no '$1' on screen"; fi
+' "$1" "${2:-exact}"
 }
+on_screen() { [ -n "$(find_view "$@")" ]; }
+# Taps the view found by find_view; fails when there is none.
+tap_on() {
+  local xy
+  xy=$(find_view "$@")
+  if [ -n "$xy" ]; then adb shell input tap $xy; log "tap '$1' at $xy"; else log "no '$1' on screen"; return 1; fi
+}
+# Swipes up from y=$1 to y=$2 (pixels of the current display size).
+scroll_down() { adb shell input swipe 300 "${1:-1600}" 300 "${2:-600}" 400; sleep 1; }
 
 log "install"
 adb install -r app/build/outputs/apk/debug/app-debug.apk >> "$LOG" 2>&1
-adb shell pm grant $PKG android.permission.RECORD_AUDIO
-adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS
-adb shell appops set $PKG USE_FULL_SCREEN_INTENT allow || true
-adb shell dumpsys deviceidle whitelist +$PKG >> "$LOG"
 adb shell settings put system screen_off_timeout 600000
 # The emulator's own launcher sometimes stalls on CI; keep its "isn't responding" dialog off the screenshots.
 adb shell settings put global hide_error_dialogs 1
@@ -46,6 +53,33 @@ adb shell settings put secure anr_show_background 0
 adb shell svc power stayon true
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell wm dismiss-keyguard
+
+# ---------- Part 0: the first launch, nothing allowed yet ----------
+# Every "Разрешить" opens Android's own question or settings page; answer it the way a person would.
+app
+sleep 6
+shot 00a-first-launch
+SETUP_STEPS=0
+for step in 1 2 3 4 5 6; do
+  tap_on "Разрешить" || break
+  SETUP_STEPS=$step
+  sleep 3
+  shot "00b-setup-$step"
+  tap_on "While using the app" || tap_on "Allow" || tap_on "ALLOW" || tap_on "Allow full screen notifications" || true
+  sleep 2
+  # A settings page (not a dialog) stays open after the switch: go back to the app (its tab bar).
+  on_screen "Записи" || { adb shell input keyevent KEYCODE_BACK; sleep 2; }
+done
+sleep 2
+shot 00c-setup-done
+SETUP_LEFT=$(on_screen "Чтобы всё работало само" && echo "card still shown" || echo "card gone")
+log "first launch: $SETUP_STEPS setup steps, then $SETUP_LEFT"
+
+# Whatever the walk-through missed, allow it now so the rest of the demo does not depend on it.
+adb shell pm grant $PKG android.permission.RECORD_AUDIO
+adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS
+adb shell appops set $PKG USE_FULL_SCREEN_INTENT allow || true
+adb shell dumpsys deviceidle whitelist +$PKG >> "$LOG"
 
 log "copy the demo night into the app"
 adb push demo/night.wav /data/local/tmp/night.wav > /dev/null
@@ -166,6 +200,85 @@ adb shell uiautomator dump /sdcard/ui.xml > /dev/null
 adb exec-out cat /sdcard/ui.xml | grep -q "опаздываю на поезд" && DREAM_SAVED=yes || DREAM_SAVED=""
 log "dream in the journal: ${DREAM_SAVED:-NO}"
 
+# ---------- Part 5: large text, a small phone, a setting changing mid-dream ----------
+log "large text (font scale 1.3)"
+adb shell settings put system font_scale 1.3
+sleep 3
+app --ez records false
+sleep 3
+shot 17-big-night
+scroll_down
+shot 18-big-night-lower
+app --ez records true
+sleep 3
+shot 19-big-records
+tap_on "Сны"
+sleep 2
+shot 20-big-dreams
+tap_on "опаздываю на поезд" contains
+sleep 2
+shot 21-big-dream
+scroll_down
+shot 22-big-dream-lower
+adb shell input keyevent KEYCODE_BACK
+sleep 2
+
+log "small phone: 720x1280 at 320 dpi (360x640 dp), large text"
+adb shell wm size 720x1280
+adb shell wm density 320
+sleep 4
+app --ez records false
+sleep 3
+shot 23-small-night
+scroll_down 1000 300
+shot 23b-small-night-lower
+
+log "the morning on the small phone: the alarm, then the dream screen"
+app --ei demo_alarm_in 2
+sleep 3
+adb shell input keyevent KEYCODE_SLEEP
+RANG2=""
+for i in $(seq 1 100); do
+  if adb shell dumpsys activity activities | grep -q "sonnik.app.AlarmActivity"; then RANG2="after ~$((i * 2)) s"; break; fi
+  sleep 2
+done
+log "second alarm: ${RANG2:-DID NOT RING}"
+sleep 2
+shot 24-small-alarm
+tap_on "Выключить"
+sleep 2
+adb shell wm dismiss-keyguard
+sleep 3
+shot 25-small-morning-dream
+adb shell input keyevent KEYCODE_BACK
+sleep 2
+
+# Android rebuilds the screen when a phone setting changes: text size, display size, or the
+# light/dark theme switching by itself at sunrise, which is just when dreams get written down.
+log "a phone setting changes while a dream is being written"
+app --ez new_dream true --es demo_dream_text "'Мне снился кот, который читал газету на крыше.'"
+sleep 3
+shot 26-dream-before-setting-change
+adb shell settings put system font_scale 1.0
+sleep 4
+shot 27-dream-after-setting-change
+if on_screen "читал газету" contains; then
+  MIDDREAM="editor still open"
+  tap_on "Готово"
+else
+  MIDDREAM="editor closed"
+fi
+sleep 2
+tap_on "Сны" || true
+sleep 2
+on_screen "читал газету" contains && MIDDREAM="$MIDDREAM, dream saved" || MIDDREAM="$MIDDREAM, dream LOST"
+shot 28-journal-after-setting-change
+log "dream being written when a setting changed: $MIDDREAM"
+
+adb shell wm size reset
+adb shell wm density reset
+adb shell settings put system font_scale 1.0
+
 adb logcat -d > "$OUT/logcat.txt" 2>&1
 grep -E "Sonnik|FullScreen|FSI|$PKG" "$OUT/logcat.txt" > "$OUT/logcat-app.txt"
 log "done"
@@ -176,4 +289,6 @@ FAILED=0
 [ -n "$STARTED" ] || { log "FAIL: recording did not start by itself"; FAILED=1; }
 [ -n "$RANG" ] || { log "FAIL: the alarm did not ring"; FAILED=1; }
 [ -n "$DREAM_SAVED" ] || { log "FAIL: the dream was not saved"; FAILED=1; }
+# Findings to look at, not failures: the first launch and a dream written during a settings change.
+log "summary: first launch: $SETUP_STEPS setup steps, $SETUP_LEFT; mid-dream setting change: $MIDDREAM"
 exit $FAILED
