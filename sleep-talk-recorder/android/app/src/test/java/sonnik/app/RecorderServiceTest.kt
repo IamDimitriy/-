@@ -22,6 +22,7 @@ import sonnik.core.SoundKind
 import java.time.LocalDateTime
 import java.time.LocalTime
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
@@ -66,6 +67,7 @@ class RecorderServiceTest {
     private fun titles() = shadowOf(nm).allNotifications.map { it.extras.getCharSequence("android.title").toString() }
 
     @Test fun sortsPhrasesAndSnoringAndReportsInTheMorning() {
+        Prefs(ctx).saveSounds = true
         val input = FakeInput(TestAudio.night())
         RecorderService.inputFactory = { _, _ -> input }
         val service = start(now = true)
@@ -133,6 +135,7 @@ class RecorderServiceTest {
     }
 
     @Test fun snoringIsCountedMinuteByMinute() {
+        Prefs(ctx).saveSounds = true
         val audio = TestAudio.cat(TestAudio.noise(60.0), TestAudio.snoring(120.0), TestAudio.noise(30.0))
         RecorderService.inputFactory = { _, _ -> FakeInput(audio) }
         start(now = true)
@@ -156,6 +159,7 @@ class RecorderServiceTest {
             Nights.save(oldDir, old.plusMinutes(30), ep),
         )
         Nights.appendMinute(oldDir, Minute(0, 0.0, 30.0, 0.0, 0.1))
+        Prefs(ctx).saveSounds = true
         RecorderService.inputFactory = { _, _ -> FakeInput(TestAudio.night()) }
         start(now = true)
         waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
@@ -189,7 +193,7 @@ class RecorderServiceTest {
         RecorderService.inputFactory = { _, _ -> FakeInput(nightThatGetsRestless(true)) }
         start(now = true)
         assertTrue(Recorder.state.value.alarmAt > 0)
-        waitFor("alarm") { shadowOf(nm).allNotifications.any { it.channelId == "alarm" } }
+        waitFor("alarm") { shadowOf(nm).allNotifications.any { it.channelId == Notifications.CH_RINGING } }
         assertTrue(Prefs(ctx).rangFor != null)
         waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
     }
@@ -199,9 +203,55 @@ class RecorderServiceTest {
         RecorderService.inputFactory = { _, _ -> FakeInput(nightThatGetsRestless(false)) }
         start(now = true)
         waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
-        assertTrue(shadowOf(nm).allNotifications.none { it.channelId == "alarm" })
+        assertTrue(shadowOf(nm).allNotifications.none { it.channelId == Notifications.CH_RINGING })
         assertEquals(null, Prefs(ctx).rangFor)
         assertTrue(Nights.list(ctx).single().minutes.size >= 14)
+    }
+
+    @Test fun onlyTheVoiceIsSavedByDefault() {
+        RecorderService.inputFactory = { _, _ -> FakeInput(TestAudio.night()) }
+        start(now = true)
+        waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
+        val night = Nights.list(ctx).single()
+        assertEquals(listOf(SoundKind.SPEECH, SoundKind.SPEECH), night.clips.map { it.sound.kind }, night.clips.toString())
+    }
+
+    @Test fun aPhraseInLongNoiseIsSavedWithoutTheNoise() {
+        // A noisy room: the hiss keeps the clip open for a minute around a two-second phrase.
+        val hiss = { s: Double -> TestAudio.noise(s, 0.01) }
+        val audio = TestAudio.cat(hiss(20.0), TestAudio.mix(hiss(2.0), TestAudio.speech(2.0, 0.2)), hiss(40.0))
+        RecorderService.inputFactory = { _, _ -> FakeInput(audio) }
+        start(now = true)
+        waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
+        val clip = Nights.list(ctx).single().clips.single()
+        assertEquals(SoundKind.SPEECH, clip.sound.kind)
+        assertTrue(clip.durationS in 2.0..5.0, "the phrase with a short margin, not a minute of hiss: ${clip.durationS}")
+    }
+
+    @Test fun runningSessionFollowsAChangedWakeUpTime() {
+        setAlarmInHalfAnHour()
+        RecorderService.inputFactory = { _, _ -> FakeInput(TestAudio.cat(TestAudio.noise(5.0)), loop = true) }
+        val service = start(now = true)
+        val first = Recorder.state.value.alarmAt
+        assertTrue(first > 0)
+        // Moved later while the night is being recorded (it used to keep the old time).
+        val later = LocalTime.now().plusMinutes(50)
+        Prefs(ctx).alarmMinute = later.hour * 60 + later.minute
+        waitFor("the new wake-up time") { Recorder.state.value.alarmAt != first }
+        val at = java.time.Instant.ofEpochMilli(Recorder.state.value.alarmAt).atZone(java.time.ZoneId.systemDefault()).toLocalTime()
+        assertEquals(later.hour * 60 + later.minute, at.hour * 60 + at.minute)
+        service.withIntent(Intent(ctx, RecorderService::class.java).setAction(RecorderService.ACTION_STOP)).startCommand(0, 2)
+        waitFor("stop") { Recorder.state.value.phase == Phase.IDLE }
+    }
+
+    @Test fun aSessionIsMarkedOpenUntilItEnds() {
+        RecorderService.inputFactory = { _, _ -> FakeInput(TestAudio.night(), loop = true) }
+        val service = start(now = true)
+        assertTrue(Prefs(ctx).sessionOpen, "a killed session can be recognised and restarted")
+        service.withIntent(Intent(ctx, RecorderService::class.java).setAction(RecorderService.ACTION_STOP)).startCommand(0, 2)
+        waitFor("stop") { Recorder.state.value.phase == Phase.IDLE }
+        assertFalse(Prefs(ctx).sessionOpen)
+        assertTrue(EventLog.lines(ctx).any { it.contains("Запись началась") }, EventLog.lines(ctx).toString())
     }
 
     @Test fun busyMicIsReported() {

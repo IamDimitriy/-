@@ -46,7 +46,8 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -55,6 +56,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -81,11 +83,18 @@ private val dayFmt = DateTimeFormatter.ofPattern("d MMMM", ru)
 private val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
 private val secFmt = DateTimeFormatter.ofPattern("HH:mm:ss")
 
-/** One clip plays at a time. */
+/** One clip plays at a time, at the chosen speed, and can be wound to any point. */
 private class ClipPlayer {
     var current by mutableStateOf<File?>(null)
         private set
     var progress by mutableFloatStateOf(0f)
+        private set
+    var positionMs by mutableIntStateOf(0)
+        private set
+    var durationMs by mutableIntStateOf(0)
+        private set
+    /** Kept for the next clips too: listening through a night goes faster. */
+    var speed by mutableFloatStateOf(1f)
         private set
     private var mp: MediaPlayer? = null
 
@@ -93,20 +102,47 @@ private class ClipPlayer {
         val same = current == f
         stop()
         if (same) return
-        mp = runCatching {
-            MediaPlayer().apply {
-                setDataSource(f.path)
-                setOnCompletionListener { stop() }
-                prepare()
-                start()
-            }
-        }.getOrNull()
-        if (mp != null) current = f
+        val p = MediaPlayer()
+        val ok = runCatching {
+            p.setDataSource(f.path)
+            p.setOnCompletionListener { stop() }
+            p.prepare()
+            p.start()
+        }.isSuccess
+        if (!ok) {
+            p.release() // a damaged or deleted file: nothing to play
+            return
+        }
+        if (speed != 1f) runCatching { p.playbackParams = p.playbackParams.setSpeed(speed) }
+        mp = p
+        current = f
+        durationMs = p.duration.coerceAtLeast(0)
     }
 
     fun tick() {
         val p = mp ?: return
+        positionMs = p.currentPosition
         if (p.duration > 0) progress = p.currentPosition.toFloat() / p.duration
+    }
+
+    /** Winds to [fraction] (0..1) of the clip. */
+    fun seekTo(fraction: Float) {
+        val p = mp ?: return
+        if (p.duration <= 0) return
+        val ms = (fraction.coerceIn(0f, 1f) * p.duration).toInt()
+        runCatching { p.seekTo(ms) }
+        positionMs = ms
+        progress = fraction.coerceIn(0f, 1f)
+    }
+
+    /** 1x → 1.5x → 2x → 1x. */
+    fun nextSpeed() {
+        speed = when (speed) {
+            1f -> 1.5f
+            1.5f -> 2f
+            else -> 1f
+        }
+        mp?.let { p -> runCatching { if (p.isPlaying) p.playbackParams = p.playbackParams.setSpeed(speed) } }
     }
 
     fun stop() {
@@ -114,7 +150,21 @@ private class ClipPlayer {
         mp = null
         current = null
         progress = 0f
+        positionMs = 0
+        durationMs = 0
     }
+}
+
+/** "0:07" */
+private fun clock(ms: Int): String {
+    val s = ms / 1000
+    return "%d:%02d".format(s / 60, s % 60)
+}
+
+private fun speedLabel(x: Float) = when (x) {
+    1f -> "1×"
+    1.5f -> "1,5×"
+    else -> "2×"
 }
 
 private sealed interface PendingDelete {
@@ -360,12 +410,25 @@ private fun ClipRow(clip: Clip, player: ClipPlayer, onShare: (Clip) -> Unit, onD
             IconButton(onClick = { onDelete(clip) }) { Icon(Icons.Filled.Delete, "Удалить", tint = Palette.muted) }
         }
         if (playing) {
-            LinearProgressIndicator(
-                progress = { player.progress },
-                modifier = Modifier.fillMaxWidth().padding(start = 60.dp, end = 8.dp).height(3.dp).clip(CircleShape),
-                color = Palette.amber, trackColor = Palette.line,
-                drawStopIndicator = {},
-            )
+            // Wind on and speed up to get through a night faster.
+            Row(Modifier.fillMaxWidth().padding(start = 52.dp), verticalAlignment = Alignment.CenterVertically) {
+                Slider(
+                    value = player.progress,
+                    onValueChange = { player.seekTo(it) },
+                    modifier = Modifier.weight(1f).semantics { contentDescription = "Перемотка" },
+                    colors = SliderDefaults.colors(
+                        thumbColor = Palette.amber, activeTrackColor = Palette.amber, inactiveTrackColor = Palette.line,
+                    ),
+                )
+                Text(
+                    "${clock(player.positionMs)} / ${clock(player.durationMs)}",
+                    style = MaterialTheme.typography.labelSmall, color = Palette.muted,
+                    modifier = Modifier.padding(horizontal = 6.dp),
+                )
+                TextButton(onClick = { player.nextSpeed() }) {
+                    Text(speedLabel(player.speed), color = Palette.amber, fontWeight = FontWeight.SemiBold)
+                }
+            }
         }
     }
 }

@@ -45,7 +45,11 @@ class AlarmTest {
 
     @After fun tearDown() = Recorder.reset()
 
-    private fun alarmNotification(): Notification? = shadowOf(nm).allNotifications.firstOrNull { it.channelId == "alarm" }
+    private fun alarmNotification(): Notification? = shadowOf(nm).getNotification(Notifications.ALARM_ID)
+
+    /** The last service started or stopped, if it is the alarm melody. */
+    private fun alarmServiceStarted() = shadowOf(ctx).nextStartedService?.component?.className == AlarmService::class.java.name
+    private fun alarmServiceStopped() = shadowOf(ctx).nextStoppedService?.component?.className == AlarmService::class.java.name
 
     @Test fun backupAlarmIsSetForTheWakeUpTime() {
         prefs.alarmOn = true
@@ -60,14 +64,34 @@ class AlarmTest {
         assertNull(Alarm.next(ctx))
     }
 
-    @Test fun backupRingsWithFullScreenAndInsistentSound() {
+    @Test fun backupRingsWithFullScreenAndTheMelodyService() {
         prefs.alarmOn = true
         AlarmRingReceiver().onReceive(ctx, Intent())
         val n = assertNotNull(alarmNotification())
         assertNotNull(n.fullScreenIntent)
-        assertTrue(n.flags and Notification.FLAG_INSISTENT != 0, "sound repeats until turned off")
+        assertEquals(Notifications.CH_RINGING, n.channelId, "silent: the service plays the melody")
         assertEquals(Notification.CATEGORY_ALARM, n.category)
         assertEquals(2, n.actions.size)
+        assertTrue(alarmServiceStarted(), "the melody plays at alarm volume, not as a notification sound")
+    }
+
+    @Test fun ringingChannelIsSilentSoTheMelodyIsNotDoubled() {
+        val ch = nm.getNotificationChannel(Notifications.CH_RINGING)
+        assertNull(ch.sound)
+        assertEquals(NotificationManager.IMPORTANCE_HIGH, ch.importance)
+    }
+
+    @Test fun turningOffStopsTheMelody() {
+        prefs.alarmOn = true
+        Alarm.ring(ctx, LocalDateTime.now(), smart = false)
+        AlarmActionReceiver().onReceive(ctx, Intent(AlarmActionReceiver.ACTION_DISMISS))
+        assertTrue(alarmServiceStopped())
+    }
+
+    @Test fun fallbackNotificationPlaysTheAlarmSoundItself() {
+        val n = Notifications.alarmNotification(ctx, smart = false, sound = true)
+        assertEquals("alarm", n.channelId)
+        assertTrue(n.flags and Notification.FLAG_INSISTENT != 0, "sound repeats until turned off")
     }
 
     @Test fun alarmChannelPlaysAnAlarmSound() {

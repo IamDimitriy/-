@@ -49,7 +49,7 @@ class SoundLabelsTest {
         val labels = listOf("Whispering", "Shout", "Laughter", "Crying, sobbing", "Groan", "Humming", "Breathing", "Sneeze",
             "Hiccup", "Creak", "Rustle", "Walk, footsteps", "Door", "Knock", "Car", "Siren", "Motorcycle", "Train",
             "Aircraft", "Dog", "Bird", "Rain", "Wind", "Thunder", "Chatter", "Cat", "Music", "Television", "Telephone",
-            "Clock", "Mechanical fan", "Water", "Dishes, pots, and pans", "Mosquito", "Vehicle horn, car horn, honking")
+            "Clock", "Water", "Dishes, pots, and pans", "Mosquito", "Vehicle horn, car horn, honking")
         for (l in labels) {
             val c = SoundLabels.classOf(l)!!
             assertTrue(c.detail != null && c.detailTitle != null, "$l -> $c")
@@ -132,8 +132,19 @@ class CombineTest {
     @Test fun rulesFillInWithoutAModel() = assertEquals(SoundClass(SoundKind.SNORE), combine(null, SoundClass(SoundKind.SNORE)))
 
     @Test fun rhythmBeatsALowRumbleLabel() =
-        assertEquals(SoundKind.SNORE, combine(SoundClass(SoundKind.STREET, "car"), SoundClass(SoundKind.SNORE)).kind)
+        assertEquals(SoundKind.SNORE, combine(SoundClass(SoundKind.STREET, "car"), SoundClass(SoundKind.SNORE))?.kind)
 
     @Test fun speechIsNeverOverruled() =
-        assertEquals(SoundKind.SPEECH, combine(SoundClass(SoundKind.SPEECH), SoundClass(SoundKind.SNORE)).kind)
+        assertEquals(SoundKind.SPEECH, combine(SoundClass(SoundKind.SPEECH), SoundClass(SoundKind.SNORE))?.kind)
+
+    /** The network heard only hiss: the rules must not turn it into a phrase or "other". */
+    @Test fun noiseTheNetworkIgnoresIsDropped() {
+        assertEquals(null, combine(null, SoundClass(SoundKind.SPEECH)))
+        assertEquals(null, combine(null, SoundClass(SoundKind.OTHER)))
+    }
+
+    @Test fun steadyNoiseLabelsAreIgnored() {
+        assertEquals(null, SoundLabels.classify(mapOf("White noise" to 0.9f, "Mechanical fan" to 0.5f, "Hum" to 0.3f)))
+        assertEquals(null, SoundLabels.classOf("Air conditioning"))
+    }
 }

@@ -150,8 +150,9 @@ adb shell run-as $PKG ls -lR files/nights >> "$LOG" 2>&1
 # adb joins its arguments with spaces, so the remote command is quoted as one string.
 CLIP_NAMES=$(adb shell "run-as $PKG sh -c 'ls files/nights/*/*.wav'" 2>/dev/null)
 CLIPS=$(echo "$CLIP_NAMES" | grep -c '__speech')
-SNORES=$(echo "$CLIP_NAMES" | grep -c '__snore')
-log "clips kept from the demo night: $CLIPS phrases (expected 3), $SNORES snoring samples (expected 1+)"
+# Only the voice is kept by default: snoring is counted by the minute, not saved as clips.
+OTHERS=$(echo "$CLIP_NAMES" | grep '\.wav' | grep -vc '__speech')
+log "clips kept from the demo night: $CLIPS phrases (expected 3), $OTHERS other sounds (expected 0)"
 echo "$CLIP_NAMES" >> "$LOG"
 
 # ---------- Part 2: automatic start with the screen off ----------
@@ -303,13 +304,14 @@ adb shell wm size reset
 adb shell wm density reset
 adb shell settings put system font_scale 1.0
 
+adb shell "run-as $PKG cat files/events.log" > "$OUT/events.log" 2>/dev/null
 adb logcat -d > "$OUT/logcat.txt" 2>&1
 grep -E "Sonnik|FullScreen|FSI|$PKG" "$OUT/logcat.txt" > "$OUT/logcat-app.txt"
 log "done"
 
 FAILED=0
 [ "$CLIPS" = 3 ] || { log "FAIL: expected 3 phrases, got $CLIPS"; FAILED=1; }
-[ "$SNORES" -ge 1 ] || { log "FAIL: snoring was not saved as its own kind"; FAILED=1; }
+[ "$OTHERS" = 0 ] || { log "FAIL: sounds other than speech were saved although only the voice is asked for"; FAILED=1; }
 [ -n "$STARTED" ] || { log "FAIL: recording did not start by itself"; FAILED=1; }
 [ -n "$RANG" ] || { log "FAIL: the alarm did not ring"; FAILED=1; }
 [ -n "$DREAM_SAVED" ] || { log "FAIL: the dream was not saved"; FAILED=1; }

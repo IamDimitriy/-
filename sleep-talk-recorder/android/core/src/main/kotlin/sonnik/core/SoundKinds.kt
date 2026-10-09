@@ -41,10 +41,12 @@ object SoundLabels {
         if (key != null && ru != null) titles[key] = ru
     }
 
+    /** Silence, room tone and steady noise (a fan, an air conditioner, hum): nothing worth keeping. */
     val ignored = setOf(
         "Silence", "Inside, small room", "Inside, large room or hall", "Inside, public space", "Noise",
         "Environmental noise", "White noise", "Pink noise", "Static", "Field recording", "Reverberation", "Echo",
         "Sound effect", "Distortion", "Sidetone", "Outside, rural or natural", "Hubbub, speech noise, speech babble",
+        "Mechanical fan", "Air conditioning", "Whir", "Hum", "Mains hum", "Buzz", "Rumble", "Hiss", "Static noise",
     )
 
     init {
@@ -99,11 +101,10 @@ object SoundLabels {
         add(SoundKind.OTHER, "phone", "телефон", "Telephone", "Telephone bell ringing", "Ringtone", "Alarm", "Alarm clock",
             "Beep, bleep", "Ping", "Ding", "Buzzer")
         add(SoundKind.OTHER, "clock", "часы", "Clock", "Tick", "Tick-tock")
-        add(SoundKind.OTHER, "fan", "вентилятор", "Mechanical fan", "Air conditioning", "Whir", "Hum", "Mains hum")
         add(SoundKind.OTHER, "water", "вода", "Water", "Water tap, faucet", "Sink (filling or washing)", "Toilet flush",
             "Drip", "Pour", "Trickle, dribble", "Liquid", "Splash, splatter", "Bathtub (filling or washing)")
         add(SoundKind.OTHER, "dishes", "посуда", "Dishes, pots, and pans", "Cutlery, silverware", "Chink, clink", "Glass")
-        add(SoundKind.OTHER, "insect", "насекомое", "Mosquito", "Fly, housefly", "Insect", "Buzz", "Bee, wasp, etc.", "Cricket")
+        add(SoundKind.OTHER, "insect", "насекомое", "Mosquito", "Fly, housefly", "Insect", "Bee, wasp, etc.", "Cricket")
     }
 
     fun detailTitle(key: String): String? = titles[key]
@@ -186,12 +187,14 @@ object HeuristicClassifier {
 }
 
 /**
- * Final category from the neural classifier and the rule-based one. The network knows far more
- * sounds; the rules only overrule it for snoring, which they recognise by its breathing rhythm
- * even when the network hears just a low rumble.
+ * Final category from the neural classifier and the rule-based one, or null when the clip is not
+ * worth keeping. The network knows far more sounds; the rules only overrule it for snoring, which
+ * they recognise by its breathing rhythm even when the network hears just a low rumble. When the
+ * network hears nothing but silence or steady noise ([model] is null), that is the answer: the
+ * rules alone take hiss for a voice too easily.
  */
-fun combine(model: SoundClass?, rules: SoundClass): SoundClass = when {
-    model == null -> rules
+fun combine(model: SoundClass?, rules: SoundClass): SoundClass? = when {
+    model == null -> rules.takeIf { it.kind == SoundKind.SNORE }
     rules.kind == SoundKind.SNORE && model.kind != SoundKind.SPEECH && model.kind != SoundKind.SNORE -> rules
     else -> model
 }

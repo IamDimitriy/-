@@ -28,7 +28,8 @@ data class NightWindow(val start: LocalTime, val end: LocalTime) {
         return if (sameDay.isAfter(begin)) sameDay else sameDay.plusDays(1)
     }
 
-    private fun currentStart(now: LocalDateTime): LocalDateTime {
+    /** Start of the window running at [now] (meaningful when [contains] is true). */
+    fun currentStart(now: LocalDateTime): LocalDateTime {
         val today = now.toLocalDate().atTime(start)
         return if (!today.isAfter(now)) today else today.minusDays(1)
     }

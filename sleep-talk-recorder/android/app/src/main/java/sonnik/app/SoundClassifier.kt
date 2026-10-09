@@ -8,9 +8,9 @@ import sonnik.core.SoundClass
 import sonnik.core.SoundLabels
 import sonnik.core.combine
 
-/** Decides what a saved clip is: speech, snoring, a door, a car... */
+/** Decides what a clip is: speech, snoring, a door, a car... or null for silence and steady noise. */
 fun interface SoundClassifier : AutoCloseable {
-    fun classify(audio: FloatArray, sampleRate: Int): SoundClass
+    fun classify(audio: FloatArray, sampleRate: Int): SoundClass?
     override fun close() {}
 }
 
@@ -24,7 +24,7 @@ val heuristicClassifier = SoundClassifier { audio, rate -> HeuristicClassifier.c
  */
 class YamnetClassifier private constructor(private val model: AudioClassifier) : SoundClassifier {
 
-    override fun classify(audio: FloatArray, sampleRate: Int): SoundClass {
+    override fun classify(audio: FloatArray, sampleRate: Int): SoundClass? {
         val rules = HeuristicClassifier.classify(audio, sampleRate)
         val x = if (sampleRate == RATE) audio else resample(audio, sampleRate, RATE)
         val scores = HashMap<String, Float>()
@@ -43,7 +43,7 @@ class YamnetClassifier private constructor(private val model: AudioClassifier) :
         } while (start + WINDOW / 2 < x.size)
         val result = combine(SoundLabels.classify(scores), rules)
         val top = scores.entries.sortedByDescending { it.value }.take(3).joinToString { "${it.key} %.2f".format(it.value) }
-        Log.i(TAG, "Clip: $top -> ${result.title}")
+        Log.i(TAG, "Clip: $top -> ${result?.title ?: "noise, dropped"}")
         return result
     }
 

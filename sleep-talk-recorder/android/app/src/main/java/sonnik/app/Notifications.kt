@@ -29,6 +29,8 @@ object Notifications {
     private const val CH_START = "start"
     private const val CH_INFO = "info"
     private const val CH_ALARM = "alarm"
+    /** The ringing alarm when [AlarmService] plays the sound itself: the notification stays silent. */
+    const val CH_RINGING = "ringing"
     private const val TAG = "Sonnik"
 
     private val hhmm = DateTimeFormatter.ofPattern("HH:mm")
@@ -64,6 +66,14 @@ object Notifications {
                 )
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 600, 400, 600, 400, 600)
+                setShowBadge(false)
+            }
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CH_RINGING, "Будильник звонит", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Экран будильника; мелодию играет сам Сонник на громкости будильника"
+                setSound(null, null)
+                enableVibration(false)
                 setShowBadge(false)
             }
         )
@@ -143,11 +153,12 @@ object Notifications {
     }
 
     /**
-     * The ringing alarm: opens [AlarmActivity] over the lock screen and plays the alarm sound
-     * over and over (FLAG_INSISTENT) until it is turned off or snoozed, for at most 10 minutes;
-     * then [Alarm] rings it again if nobody reacted.
+     * The ringing alarm: opens [AlarmActivity] over the lock screen, with "turn off" and
+     * "10 more minutes" buttons. Normally silent, as [AlarmService] plays the melody; with
+     * [sound] (the service could not start) the notification itself plays the alarm sound over
+     * and over (FLAG_INSISTENT) for up to 10 minutes.
      */
-    fun alarm(ctx: Context, smart: Boolean) {
+    fun alarmNotification(ctx: Context, smart: Boolean, sound: Boolean): android.app.Notification {
         val screen = PendingIntent.getActivity(
             ctx, 40,
             Intent(ctx, AlarmActivity::class.java).putExtra(AlarmActivity.EXTRA_SMART, smart)
@@ -158,7 +169,7 @@ object Notifications {
             ctx, code, Intent(ctx, AlarmActionReceiver::class.java).setAction(name),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val n = NotificationCompat.Builder(ctx, CH_ALARM)
+        val b = NotificationCompat.Builder(ctx, if (sound) CH_ALARM else CH_RINGING)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Доброе утро")
             .setContentText(if (smart) "Будильник: сейчас сон лёгкий, хорошее время проснуться" else "Будильник")
@@ -167,13 +178,19 @@ object Notifications {
             .setFullScreenIntent(screen, true)
             .setContentIntent(screen)
             .setOngoing(true)
-            .setTimeoutAfter(10 * 60 * 1000L)
             .addAction(0, "Выключить", action(AlarmActionReceiver.ACTION_DISMISS, 41))
             .addAction(0, "Ещё 10 минут", action(AlarmActionReceiver.ACTION_SNOOZE, 42))
-            .build()
-        n.flags = n.flags or android.app.Notification.FLAG_INSISTENT
-        notify(ctx, ALARM_ID, n)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+        if (sound) b.setTimeoutAfter(10 * 60 * 1000L)
+        // AlarmService posts the same notification again: that must not open the screen twice.
+        else b.setOnlyAlertOnce(true)
+        val n = b.build()
+        if (sound) n.flags = n.flags or android.app.Notification.FLAG_INSISTENT
+        return n
     }
+
+    fun alarm(ctx: Context, smart: Boolean, sound: Boolean = false) =
+        notify(ctx, ALARM_ID, alarmNotification(ctx, smart, sound))
 
     fun cancelStartPrompt(ctx: Context) = NotificationManagerCompat.from(ctx).cancel(START_ID)
 
@@ -214,7 +231,10 @@ object Notifications {
     private fun notify(ctx: Context, id: Int, n: android.app.Notification) {
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) return
+        ) {
+            if (id == START_ID || id == ALARM_ID) EventLog.add(ctx, "Уведомления запрещены: Android не покажет «${n.extras.getCharSequence("android.title")}»")
+            return
+        }
         NotificationManagerCompat.from(ctx).notify(id, n)
     }
 }

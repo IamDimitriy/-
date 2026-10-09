@@ -1,7 +1,7 @@
 package sonnik.app
 
 import android.app.Activity
-import android.app.TimePickerDialog
+import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -26,9 +27,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -37,6 +41,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -48,7 +54,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -75,6 +80,9 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
     var alarmWindow by remember { mutableIntStateOf(prefs.alarmWindow) }
     var setup by remember { mutableStateOf(Setup.items(ctx, auto || alarmOn)) }
     var skipped by remember { mutableStateOf(Scheduler.isTonightSkipped(ctx)) }
+    var saveSounds by remember { mutableStateOf(prefs.saveSounds) }
+    var showLog by remember { mutableStateOf(false) }
+    val ringing by AlarmService.ringing.collectAsStateWithLifecycle()
 
     LifecycleResumeEffect(Unit) {
         // Settings can change outside this screen (notification, another window), so re-read them.
@@ -130,6 +138,9 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
     ) {
         Text("Сонник", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
 
+        // The alarm can sound without its screen (no full-screen permission, notifications off).
+        if (ringing) RingingCard(onDismiss = { Alarm.dismiss(ctx) }, onSnooze = { Alarm.snooze(ctx) })
+
         // Without these nothing switches on at night, so the status must not just promise it.
         val warning = when {
             setup.any { it.id == "mic" && !it.ok } ->
@@ -179,6 +190,14 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
                     alarmOn = it; prefs.alarmOn = it; Scheduler.sync(ctx); setup = Setup.items(ctx, auto || it)
                 })
             }
+            if (alarmOn && setup.any { it.id == "notif" && !it.ok }) {
+                Text(
+                    "Без уведомлений будильник зазвучит, но не покажет экран с кнопкой «Выключить»: " +
+                        "выключать придётся здесь. Разрешите уведомления выше.",
+                    style = MaterialTheme.typography.bodySmall, color = Palette.danger,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+            }
             if (alarmOn) {
                 HorizontalDivider()
                 Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -210,13 +229,83 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
             }
         }
 
+        Section("Что сохранять") {
+            SettingRow(
+                "Другие звуки тоже",
+                "Храп, кашель, скрипы, улица. Без этого сохраняется только речь, а шум и тишина " +
+                    "отбрасываются. Храп считается в любом случае.",
+            ) {
+                Switch(checked = saveSounds, onCheckedChange = { saveSounds = it; prefs.saveSounds = it })
+            }
+        }
+
+        if (Setup.isSamsung) {
+            Section("Samsung") {
+                Text(
+                    "Samsung усыпляет приложения, которые считает ненужными, и они пропускают свои будильники. " +
+                        "Добавьте Сонник в «Приложения, которые никогда не переходят в спящий режим»: " +
+                        "Настройки → Батарея → Ограничения фонового использования.",
+                    style = MaterialTheme.typography.bodySmall, color = Palette.muted,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+                TextButton(onClick = {
+                    Setup.samsungBatteryIntents(ctx).firstOrNull { runCatching { ctx.startActivity(it) }.isSuccess }
+                }) { Text("Открыть настройки батареи") }
+            }
+        }
+
+        TextButton(onClick = { showLog = true }) { Text("Журнал: что происходило ночью") }
+
         Text(
             "Записи хранятся только на этом телефоне. Микрофон слушает всю ночь на максимальной " +
-                "чувствительности и сохраняет только фрагменты со звуком, разложенные по видам: " +
-                "речь, храп, кашель, скрип и шорох, улица.",
+                "чувствительности, а сохраняется только речь: шум вокруг фразы обрезается.",
             style = MaterialTheme.typography.bodySmall, color = Palette.muted,
         )
     }
+
+    if (showLog) EventLogDialog(onClose = { showLog = false })
+}
+
+/** The alarm is sounding: turn it off right here (its own screen may not have opened). */
+@Composable
+private fun RingingCard(onDismiss: () -> Unit, onSnooze: () -> Unit) {
+    Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Palette.amber)) {
+        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Будильник звонит", style = MaterialTheme.typography.headlineSmall, color = Palette.amberInk)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(containerColor = Palette.amberInk, contentColor = Palette.amber),
+                ) { Text("Выключить") }
+                OutlinedButton(onClick = onSnooze) { Text("Ещё 10 минут", color = Palette.amberInk) }
+            }
+        }
+    }
+}
+
+/** What the app did at night (alarms, the start, the microphone), newest first, to share if a night failed. */
+@Composable
+private fun EventLogDialog(onClose: () -> Unit) {
+    val ctx = LocalContext.current
+    val lines = remember { EventLog.lines(ctx) }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("Журнал") },
+        text = {
+            Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                if (lines.isEmpty()) Text("Пока пусто: здесь появится, что происходило ночью.", color = Palette.muted)
+                for (l in lines) Text(l, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 3.dp))
+            }
+        },
+        confirmButton = { TextButton(onClick = onClose) { Text("Закрыть") } },
+        dismissButton = {
+            if (lines.isNotEmpty()) TextButton(onClick = {
+                val send = Intent(Intent.ACTION_SEND).setType("text/plain")
+                    .putExtra(Intent.EXTRA_TEXT, "Журнал Сонника\n" + lines.reversed().joinToString("\n"))
+                runCatching { ctx.startActivity(Intent.createChooser(send, "Отправить журнал")) }
+            }) { Text("Поделиться") }
+        },
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -293,6 +382,7 @@ private fun StatusCard(
                         inWindow -> {
                             Text("Сейчас ночь, но запись не идёт", style = MaterialTheme.typography.headlineSmall)
                             Text("Нажмите, чтобы слушать до ${Prefs.format(endMinute)}.", color = Palette.muted)
+                            if (warning != null) Text(warning, color = Palette.danger)
                             Button(onClick = onStartNow) { Text("Начать запись") }
                         }
                         auto && skipped -> {
@@ -410,26 +500,43 @@ private fun SettingRow(title: String, hint: String, control: @Composable () -> U
     }
 }
 
+/**
+ * A time setting: tap to open the clock dial. The chosen time is read from the dial when
+ * "Готово" is pressed (the old system dialog lost times typed in with the keyboard on some phones).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TimeButton(label: String, minute: Int, modifier: Modifier, onPick: (Int) -> Unit) {
-    val ctx = LocalContext.current
+    var open by remember { mutableStateOf(false) }
     Column(
         modifier
             .clip(RoundedCornerShape(14.dp))
-            .background(Palette.panelHigh)
-            .padding(0.dp),
+            .background(Palette.panelHigh),
     ) {
         TextButton(
-            onClick = {
-                TimePickerDialog(ctx, { _, h, m -> onPick(h * 60 + m) }, minute / 60, minute % 60, true).show()
-            },
+            onClick = { open = true },
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
         ) {
             Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                 Text(label, style = MaterialTheme.typography.bodySmall, color = Palette.muted)
-                Text(Prefs.format(minute), fontSize = 28.sp, color = Color(0xFFE6E2D6), fontWeight = FontWeight.Light)
+                Text(Prefs.format(minute), fontSize = 28.sp, color = Palette.text, fontWeight = FontWeight.Light)
             }
         }
+    }
+    if (open) {
+        val picker = rememberTimePickerState(initialHour = minute / 60, initialMinute = minute % 60, is24Hour = true)
+        AlertDialog(
+            onDismissRequest = { open = false },
+            title = { Text(label) },
+            text = { TimePicker(state = picker) },
+            confirmButton = {
+                TextButton(onClick = {
+                    open = false
+                    onPick(picker.hour * 60 + picker.minute)
+                }) { Text("Готово") }
+            },
+            dismissButton = { TextButton(onClick = { open = false }) { Text("Отмена") } },
+        )
     }
 }

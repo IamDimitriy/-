@@ -112,6 +112,67 @@ class SchedulerTest {
         assertTrue(shadowOf(nm).allNotifications.isEmpty())
     }
 
+    /** A night window that is running now, whatever the time of the test. */
+    private fun nightNow() {
+        val now = java.time.LocalTime.now()
+        prefs.startMinute = (now.hour * 60 + now.minute + 24 * 60 - 30) % (24 * 60)
+        prefs.endMinute = (now.hour * 60 + now.minute + 90) % (24 * 60)
+    }
+
+    private fun retry() = AlarmReceiver().onReceive(ctx, Intent(AlarmReceiver.ACTION_RETRY))
+    private fun retryArmed(from: Long) =
+        shadowOf(am).scheduledAlarms.any { it.triggerAtMs in from + 9 * 60_000..from + 11 * 60_000 }
+
+    @Test fun startIsTriedAgainOnceTheScreenIsOff() {
+        nightNow()
+        shadowOf(ctx.getSystemService(android.os.PowerManager::class.java)).setIsInteractive(false)
+        val before = System.currentTimeMillis()
+        retry()
+        val n = shadowOf(nm).allNotifications.single()
+        assertNotNull(n.fullScreenIntent, "with the screen off the start opens over the lock screen")
+        assertTrue(retryArmed(before), "and keeps trying until the recording runs")
+    }
+
+    @Test fun whileThePhoneIsInUseTheStartWaits() {
+        nightNow()
+        shadowOf(ctx.getSystemService(android.os.PowerManager::class.java)).setIsInteractive(true)
+        val before = System.currentTimeMillis()
+        retry()
+        assertTrue(shadowOf(nm).allNotifications.isEmpty(), "no pop-up every ten minutes while the phone is in use")
+        assertTrue(retryArmed(before))
+    }
+
+    @Test fun noRetryAfterTonightsRecording() {
+        nightNow()
+        shadowOf(ctx.getSystemService(android.os.PowerManager::class.java)).setIsInteractive(false)
+        prefs.lastSessionAt = LocalDateTime.now().minusMinutes(5) // the user stopped it
+        retry()
+        assertTrue(shadowOf(nm).allNotifications.isEmpty())
+    }
+
+    @Test fun aRecordingAndroidCutShortIsStartedAgain() {
+        nightNow()
+        shadowOf(ctx.getSystemService(android.os.PowerManager::class.java)).setIsInteractive(false)
+        prefs.lastSessionAt = LocalDateTime.now().minusMinutes(20)
+        prefs.sessionOpen = true // never finished: the app was closed in the night
+        retry()
+        assertNotNull(shadowOf(nm).allNotifications.single().fullScreenIntent)
+    }
+
+    @Test fun noRetryOutsideTheNight() {
+        val now = java.time.LocalTime.now()
+        prefs.startMinute = (now.hour * 60 + now.minute + 120) % (24 * 60)
+        prefs.endMinute = (now.hour * 60 + now.minute + 180) % (24 * 60)
+        shadowOf(ctx.getSystemService(android.os.PowerManager::class.java)).setIsInteractive(false)
+        retry()
+        assertTrue(shadowOf(nm).allNotifications.isEmpty())
+    }
+
+    @Test fun nightStartIsWrittenToTheLog() {
+        Scheduler.sync(ctx)
+        assertTrue(EventLog.lines(ctx).any { it.contains("Автозапуск поставлен") }, EventLog.lines(ctx).toString())
+    }
+
     @Test fun bootReArmsTheAlarm() {
         BootReceiver().onReceive(ctx, Intent(Intent.ACTION_MY_PACKAGE_REPLACED))
         assertNotNull(shadowOf(am).peekNextScheduledAlarm())

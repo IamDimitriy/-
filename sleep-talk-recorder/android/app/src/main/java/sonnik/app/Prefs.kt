@@ -45,6 +45,29 @@ class Prefs(context: Context) {
         get() = sp.getString("rangFor", null)?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }
         set(v) = sp.edit().putString("rangFor", v?.toString()).apply()
 
+    /**
+     * Also save snoring, coughs, creaks and the street, not only speech. Off by default: most
+     * nights are about what was said, and other sounds fill the list. Snoring is counted either way.
+     */
+    var saveSounds: Boolean
+        get() = sp.getBoolean("saveSounds", false)
+        set(v) = sp.edit().putBoolean("saveSounds", v).apply()
+
+    /** When the last recording session started (manual or automatic), or null. */
+    var lastSessionAt: LocalDateTime?
+        get() = sp.getString("lastSession", null)?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }
+        set(v) = sp.edit().putString("lastSession", v?.toString()).apply()
+
+    /** A session is running; still true after the phone or Android stopped it without warning. */
+    var sessionOpen: Boolean
+        get() = sp.getBoolean("sessionOpen", false)
+        set(v) = sp.edit().putBoolean("sessionOpen", v).apply()
+
+    /** The night start the automatic start was last armed for, to note changes in [EventLog]. */
+    var armedFor: LocalDateTime?
+        get() = sp.getString("armedFor", null)?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }
+        set(v) = sp.edit().putString("armedFor", v?.toString()).apply()
+
     /** How many times the alarm has rung in a row with nobody turning it off or snoozing it. */
     var alarmRings: Int
         get() = sp.getInt("alarmRings", 0)

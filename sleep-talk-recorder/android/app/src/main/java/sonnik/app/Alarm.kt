@@ -50,7 +50,10 @@ object Alarm {
         val prefs = Prefs(ctx)
         val rings = prefs.alarmRings + 1
         prefs.alarmRings = rings
+        // The screen and its buttons come from the notification, the melody from AlarmService.
         Notifications.alarm(ctx, smart)
+        if (!AlarmService.start(ctx, smart)) Notifications.alarm(ctx, smart, sound = true)
+        EventLog.add(ctx, "Будильник звонит" + (if (smart) " (сон лёгкий)" else "") + (if (rings > 1) ", повтор $rings" else ""))
         if (rings < MAX_RINGS) {
             // The same alarm as a snooze: snoozing replaces it, turning off cancels it.
             Scheduler.setAlarmClock(ctx, System.currentTimeMillis() + SNOOZE_MIN * 60_000, snoozeIntent(ctx))
@@ -59,13 +62,16 @@ object Alarm {
     }
 
     fun dismiss(ctx: Context) {
+        AlarmService.stop(ctx)
         NotificationManagerCompat.from(ctx).cancel(Notifications.ALARM_ID)
+        EventLog.add(ctx, "Будильник выключен")
         ctx.getSystemService(AlarmManager::class.java).cancel(snoozeIntent(ctx)) // no repeat
         Prefs(ctx).alarmRings = 0
         if (Recorder.state.value.phase != Phase.IDLE) Recorder.stop(ctx) // you are awake now
     }
 
     fun snooze(ctx: Context) {
+        AlarmService.stop(ctx)
         NotificationManagerCompat.from(ctx).cancel(Notifications.ALARM_ID)
         // Someone pressed it: the snoozed ring may repeat again if they fall back asleep.
         Prefs(ctx).alarmRings = 0

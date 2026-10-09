@@ -50,6 +50,22 @@ object Setup {
         return list
     }
 
+    /** What is not allowed, for the event log: "" when everything is. */
+    fun problems(ctx: Context): String {
+        val missing = items(ctx, autoStart = true).filter { !it.ok }.map { it.title.lowercase() }
+        return if (missing.isEmpty()) "" else " (не разрешено: ${missing.joinToString()})"
+    }
+
+    /** Samsung puts apps it thinks are unused to sleep, and a sleeping app misses its alarms. */
+    val isSamsung: Boolean get() = Build.MANUFACTURER.equals("samsung", ignoreCase = true)
+
+    /** Samsung's battery settings, where "never sleeping apps" are, or the closest screen there is. */
+    fun samsungBatteryIntents(ctx: Context): List<Intent> = listOf(
+        Intent().setClassName("com.samsung.android.lool", "com.samsung.android.sm.battery.ui.BatteryActivity"),
+        Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${ctx.packageName}")),
+    )
+
     private fun granted(ctx: Context, p: String) =
         ContextCompat.checkSelfPermission(ctx, p) == PackageManager.PERMISSION_GRANTED
 
