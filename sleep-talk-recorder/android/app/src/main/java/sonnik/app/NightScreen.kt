@@ -124,6 +124,15 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
         }
     }
 
+    /**
+     * The night window was just set to include the present moment (or auto-start switched on
+     * during the night): its start alarm will not fire until tomorrow, so try in a minute,
+     * which opens the recording once the screen goes dark.
+     */
+    fun startIfNightAlreadyBegan() {
+        if (Scheduler.startPending(ctx)) Scheduler.armRetry(ctx, delayMs = 60_000)
+    }
+
     fun startNow() {
         val mic = setup.first { it.id == "mic" }
         if (mic.ok) Recorder.start(ctx, now = true)
@@ -171,15 +180,18 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
                 Switch(checked = auto, onCheckedChange = {
                     auto = it; prefs.autoStart = it; Scheduler.sync(ctx); setup = Setup.items(ctx, it || alarmOn)
                     skipped = Scheduler.isTonightSkipped(ctx)
+                    startIfNightAlreadyBegan()
                 })
             }
             HorizontalDivider()
             Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 TimeButton("Начало", start, Modifier.weight(1f)) {
                     start = it; prefs.startMinute = it; prefs.skippedStart = null; Scheduler.sync(ctx); skipped = false
+                    startIfNightAlreadyBegan()
                 }
                 TimeButton("Конец", end, Modifier.weight(1f)) {
                     end = it; prefs.endMinute = it; Scheduler.sync(ctx)
+                    startIfNightAlreadyBegan()
                 }
             }
         }

@@ -254,6 +254,16 @@ class RecorderServiceTest {
         assertTrue(EventLog.lines(ctx).any { it.contains("Запись началась") }, EventLog.lines(ctx).toString())
     }
 
+    @Test fun aDreamToldWhileTheNightIsRecordedIsNotSleepTalk() {
+        // The user woke up and is dictating a dream for the next minute, the recording still on.
+        val now = System.currentTimeMillis()
+        for (t in 0..60 step 5) Recorder.awake(now + t * 1000L)
+        RecorderService.inputFactory = { _, _ -> FakeInput(TestAudio.night()) }
+        start(now = true)
+        waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
+        assertTrue(Nights.list(ctx).flatMap { it.clips }.isEmpty(), Nights.list(ctx).toString())
+    }
+
     @Test fun busyMicIsReported() {
         RecorderService.inputFactory = { _, _ ->
             object : AudioInput {

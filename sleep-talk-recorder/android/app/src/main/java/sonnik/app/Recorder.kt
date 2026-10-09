@@ -34,7 +34,11 @@ object Recorder {
     val state: StateFlow<RecorderState> = _state
 
     internal fun update(fn: (RecorderState) -> RecorderState) = _state.update(fn)
-    internal fun reset() { _state.value = RecorderState() }
+    internal fun reset() {
+        _state.value = RecorderState()
+        awakeFrom = 0
+        awakeTo = 0
+    }
 
     /** [now] = keep everything from this moment; otherwise wait for the night window to begin. */
     fun start(ctx: Context, now: Boolean, demoWav: String? = null) {
@@ -46,4 +50,20 @@ object Recorder {
     fun stop(ctx: Context) {
         ctx.startService(Intent(ctx, RecorderService::class.java).setAction(RecorderService.ACTION_STOP))
     }
+
+    @Volatile private var awakeFrom = 0L
+    @Volatile private var awakeTo = 0L
+
+    /**
+     * The user is telling a dream to the phone: what the microphone hears now is not sleep talk.
+     * Called while dictation runs; [heardAwake] then tells the night recording to skip it.
+     */
+    fun awake(now: Long = System.currentTimeMillis()) {
+        if (now - awakeTo > 10_000) awakeFrom = now
+        awakeTo = now
+    }
+
+    /** Whether a sound between [fromMs] and [toMs] (epoch ms) overlaps the user dictating. */
+    fun heardAwake(fromMs: Long, toMs: Long): Boolean =
+        awakeTo > 0 && toMs >= awakeFrom - 2_000 && fromMs <= awakeTo + 3_000
 }

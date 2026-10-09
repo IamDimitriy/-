@@ -206,12 +206,15 @@ fun DreamEditor(
     fun startListening() {
         problem = null
         listening = true
+        // A night recording still running must not keep the dream being told as sleep talk.
+        Recorder.awake()
         dictation.start(
-            onPartial = { partial = it },
+            onPartial = { partial = it; Recorder.awake() },
             onFinal = { words ->
+                Recorder.awake()
                 text = if (text.isBlank()) words.replaceFirstChar { it.uppercase() } else "${text.trimEnd()} $words"
             },
-            onStopped = { err -> listening = false; problem = err },
+            onStopped = { err -> listening = false; problem = err; Recorder.awake() },
         )
     }
 

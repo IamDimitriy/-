@@ -87,10 +87,10 @@ object Scheduler {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
-    /** Another try at tonight's start in [RETRY_MIN] minutes (see [AlarmReceiver]). */
-    fun armRetry(ctx: Context) {
+    /** Another try at tonight's start in [RETRY_MIN] minutes, or after [delayMs] (see [AlarmReceiver]). */
+    fun armRetry(ctx: Context, delayMs: Long = RETRY_MIN * 60_000) {
         val am = ctx.getSystemService(AlarmManager::class.java)
-        val at = System.currentTimeMillis() + RETRY_MIN * 60_000
+        val at = System.currentTimeMillis() + delayMs
         if (canExact(ctx)) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, retryIntent(ctx))
         else am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, retryIntent(ctx))
     }

@@ -221,6 +221,8 @@ class RecorderService : Service() {
             val start = LocalDateTime.ofInstant(Instant.ofEpochMilli(at), zone)
             val end = start.plusNanos((ep.durationS * 1e9).toLong())
             if (!plan.keeps(start, end)) return
+            // Awake and telling a dream to the phone: not sleep talk.
+            if (Recorder.heardAwake(at, at + (ep.durationS * 1000).toLong())) return
             val dir = nightDir ?: Nights.dirFor(this, plan.saveFrom).also { nightDir = it }
             saver.execute {
                 runCatching {
