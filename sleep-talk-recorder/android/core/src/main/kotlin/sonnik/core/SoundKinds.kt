@@ -13,7 +13,9 @@ enum class SoundKind(val id: String, val title: String) {
     COUGH("cough", "Кашель"),
     MOVEMENT("move", "Скрип и шорох"),
     STREET("street", "Улица"),
-    OTHER("other", "Другое");
+    OTHER("other", "Другое"),
+    /** Maybe a voice, maybe not: kept, but apart from the sure phrases. */
+    UNSURE("unsure", "Неразборчиво");
 
     companion object {
         fun byId(id: String?): SoundKind? = entries.firstOrNull { it.id == id }
@@ -56,11 +58,13 @@ object SoundLabels {
         add(SoundKind.SPEECH, "shout", "крик", "Shout", "Bellow", "Whoop", "Yell", "Screaming", "Children shouting")
         add(SoundKind.SPEECH, "laugh", "смех", "Laughter", "Baby laughter", "Giggle", "Snicker", "Belly laugh", "Chuckle, chortle")
         add(SoundKind.SPEECH, "cry", "плач", "Crying, sobbing", "Baby cry, infant cry", "Whimper", "Wail, moan")
-        add(SoundKind.SPEECH, "moan", "стон", "Groan", "Grunt", "Sigh")
         add(SoundKind.SPEECH, "hum", "напевание", "Humming", "Singing")
 
         add(SoundKind.SNORE, null, null, "Snoring", "Snort")
-        add(SoundKind.SNORE, "breath", "дыхание", "Breathing", "Wheeze", "Gasp", "Pant")
+        // Grunts, groans and sighs: the network hears them in snoring and heavy breathing far more
+        // often than in a voice, so they are not taken for sleep talk.
+        add(SoundKind.SNORE, "breath", "дыхание", "Breathing", "Wheeze", "Gasp", "Pant", "Grunt", "Groan", "Sigh")
+        titles["moan"] = "стон" // clips saved while they still counted as a voice
 
         add(SoundKind.COUGH, null, null, "Cough", "Throat clearing")
         add(SoundKind.COUGH, "sneeze", "чих", "Sneeze", "Sniff")
@@ -108,6 +112,21 @@ object SoundLabels {
     }
 
     fun detailTitle(key: String): String? = titles[key]
+
+    /** A voice label: speech, whispering, shouting, laughter, crying, humming. */
+    fun isSpeech(label: String): Boolean = label !in ignored && table[label]?.kind == SoundKind.SPEECH
+
+    /**
+     * The best label that is neither a voice nor silence or steady noise, if it is at least
+     * [minScore] sure: what a sample of the night's sounds is.
+     */
+    fun nonSpeech(scores: Map<String, Float>, minScore: Float): SoundClass? {
+        val best = scores.entries
+            .filter { it.key !in ignored && !isSpeech(it.key) }
+            .maxByOrNull { it.value } ?: return null
+        if (best.value < minScore) return null
+        return classOf(best.key)
+    }
 
     /** Category of a single label; unknown labels are [SoundKind.OTHER] without a detail. */
     fun classOf(label: String): SoundClass? {
@@ -200,25 +219,23 @@ fun combine(model: SoundClass?, rules: SoundClass): SoundClass? = when {
 }
 
 /**
- * Keeps the list readable: every phrase is saved, but snoring and other sounds that go on
- * all night are only sampled (one clip per kind every few minutes, and a cap per night).
+ * Keeps the night short to go through: every phrase is saved, but of snoring, coughs, creaks
+ * and the street only a few samples, spread over the night ([perKind] of each, [gap] apart).
+ * Nothing is deleted: what is over the limit is just not saved.
  */
 class ClipPolicy(
-    private val snoreEvery: Duration = Duration.ofMinutes(10),
-    private val otherEvery: Duration = Duration.ofMinutes(2),
-    private val maxOtherPerNight: Int = 120,
+    private val perKind: Int = 3,
+    private val gap: Duration = Duration.ofMinutes(20),
 ) {
-    private val last = HashMap<SoundKind, LocalDateTime>()
-    private var others = 0
+    private val saved = HashMap<SoundKind, MutableList<LocalDateTime>>()
 
     fun keep(kind: SoundKind, at: LocalDateTime): Boolean {
-        if (kind == SoundKind.SPEECH) return true
-        if (kind != SoundKind.SNORE && others >= maxOtherPerNight) return false
-        val every = if (kind == SoundKind.SNORE) snoreEvery else otherEvery
-        val prev = last[kind]
-        if (prev != null && Duration.between(prev, at) < every) return false
-        last[kind] = at
-        if (kind != SoundKind.SNORE) others++
+        if (kind == SoundKind.SPEECH || kind == SoundKind.UNSURE) return true
+        val list = saved.getOrPut(kind) { ArrayList() }
+        if (list.size >= perKind) return false
+        val last = list.lastOrNull()
+        if (last != null && Duration.between(last, at).abs() < gap) return false
+        list += at
         return true
     }
 }

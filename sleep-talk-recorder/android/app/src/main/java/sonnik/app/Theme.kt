@@ -32,6 +32,7 @@ object Palette {
         sonnik.core.SoundKind.MOVEMENT -> Color(0xFFB7A27C)
         sonnik.core.SoundKind.STREET -> Color(0xFF6FBFA8)
         sonnik.core.SoundKind.OTHER -> muted
+        sonnik.core.SoundKind.UNSURE -> Color(0xFF8C7650)
     }
 }
 

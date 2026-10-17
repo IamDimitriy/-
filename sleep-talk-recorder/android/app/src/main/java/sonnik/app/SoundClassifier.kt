@@ -3,31 +3,28 @@ package sonnik.app
 import android.content.Context
 import android.util.Log
 import org.tensorflow.lite.task.audio.classifier.AudioClassifier
+import sonnik.core.Heard
 import sonnik.core.HeuristicClassifier
-import sonnik.core.SoundClass
-import sonnik.core.SoundLabels
-import sonnik.core.combine
 
-/** Decides what a clip is: speech, snoring, a door, a car... or null for silence and steady noise. */
+/** Listens to a stretch of sound: the network's label scores per window plus the rules' guess. */
 fun interface SoundClassifier : AutoCloseable {
-    fun classify(audio: FloatArray, sampleRate: Int): SoundClass?
+    fun listen(audio: FloatArray, sampleRate: Int): Heard
     override fun close() {}
 }
 
 /** Rules only: used in tests and when the neural model cannot run on a phone. */
-val heuristicClassifier = SoundClassifier { audio, rate -> HeuristicClassifier.classify(audio, rate) }
+val heuristicClassifier = SoundClassifier { audio, rate -> Heard(emptyList(), HeuristicClassifier.classify(audio, rate)) }
 
 /**
- * YAMNet (AudioSet, 521 sound classes) through TensorFlow Lite. The clip is cut into ~1 s windows
- * every 0.5 s; each label keeps its best score over the clip, then [SoundLabels.classify] maps
- * the labels to the app's categories.
+ * YAMNet (AudioSet, 521 sound classes) through TensorFlow Lite. The sound is cut into ~1 s windows
+ * every 0.5 s and each window's scores are kept; [Heard] decides what it was.
  */
 class YamnetClassifier private constructor(private val model: AudioClassifier) : SoundClassifier {
 
-    override fun classify(audio: FloatArray, sampleRate: Int): SoundClass? {
+    override fun listen(audio: FloatArray, sampleRate: Int): Heard {
         val rules = HeuristicClassifier.classify(audio, sampleRate)
         val x = if (sampleRate == RATE) audio else resample(audio, sampleRate, RATE)
-        val scores = HashMap<String, Float>()
+        val windows = ArrayList<Map<String, Float>>()
         val tensor = model.createInputTensorAudio()
         val window = FloatArray(WINDOW)
         var start = 0
@@ -36,15 +33,15 @@ class YamnetClassifier private constructor(private val model: AudioClassifier) :
             val end = minOf(start + WINDOW, x.size)
             if (end > start) x.copyInto(window, 0, start, end)
             tensor.load(window)
+            val scores = HashMap<String, Float>()
             for (c in model.classify(tensor).firstOrNull()?.categories.orEmpty()) {
-                scores.merge(c.label, c.score) { a, b -> maxOf(a, b) }
+                // The 521 scores of a window are mostly near zero; a long clip has hundreds of windows.
+                if (c.score >= 0.02f) scores.merge(c.label, c.score) { a, b -> maxOf(a, b) }
             }
+            windows += scores
             start += HOP
         } while (start + WINDOW / 2 < x.size)
-        val result = combine(SoundLabels.classify(scores), rules)
-        val top = scores.entries.sortedByDescending { it.value }.take(3).joinToString { "${it.key} %.2f".format(it.value) }
-        Log.i(TAG, "Clip: $top -> ${result?.title ?: "noise, dropped"}")
-        return result
+        return Heard(windows, rules)
     }
 
     override fun close() = model.close()
@@ -60,6 +57,7 @@ class YamnetClassifier private constructor(private val model: AudioClassifier) :
             YamnetClassifier(AudioClassifier.createFromFile(ctx, "yamnet.tflite"))
         } catch (t: Throwable) { // includes UnsatisfiedLinkError on unsupported CPUs
             Log.w(TAG, "Sound classifier unavailable, using rules", t)
+            EventLog.add(ctx, "Нейросеть распознавания звуков не запустилась на этом телефоне, работают простые правила")
             heuristicClassifier
         }
 

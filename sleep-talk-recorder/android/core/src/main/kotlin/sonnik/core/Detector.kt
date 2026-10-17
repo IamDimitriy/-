@@ -99,6 +99,8 @@ class Detector(val sampleRate: Int, val cfg: DetectorConfig = DetectorConfig()) 
 
     private var cur: Current? = null
     val inEpisode: Boolean get() = cur != null
+    /** Where the episode being collected starts (s from the stream start), null between episodes. */
+    val episodeStartS: Double? get() = cur?.let { max(0L, it.startFrame) * frameLen.toDouble() / sampleRate }
 
     private class Current(val startFrame: Long, val frames: MutableList<FloatArray>, var active: Int, var peakDb: Double) {
         var silentRun = 0

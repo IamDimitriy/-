@@ -24,9 +24,11 @@ import sonnik.core.Episode
 import sonnik.core.Minute
 import sonnik.core.NightPlan
 import sonnik.core.NightSummary
+import sonnik.core.SleepOnset
 import sonnik.core.SmartWake
 import sonnik.core.VoiceTrim
 import java.io.File
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -43,6 +45,8 @@ import java.util.concurrent.atomic.AtomicInteger
 class RecorderService : Service() {
 
     @Volatile private var running = false
+    /** When the sleepers fall asleep; speech before that is talking, not sleep talk. */
+    @Volatile private var gate: SleepOnset? = null
     private var worker: Thread? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val main = Handler(Looper.getMainLooper())
@@ -53,6 +57,12 @@ class RecorderService : Service() {
         if (intent?.action == ACTION_STOP) {
             running = false
             if (worker == null) finishSession(0)
+            return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_ASLEEP) {
+            // "We are asleep": the recording loop notices it within half a second.
+            gate?.sleepNow(LocalDateTime.now())
+            if (worker == null) stopSelf() // nothing is being recorded: nothing to keep running for
             return START_NOT_STICKY
         }
         if (!running) begin(intent)
@@ -75,6 +85,8 @@ class RecorderService : Service() {
             return
         }
 
+        val onset = prefs.onsetMin.coerceAtLeast(0)
+        gate = SleepOnset(Duration.ofMinutes(onset.toLong()), plan.saveFrom)
         Recorder.update {
             RecorderState(
                 phase = if (System.currentTimeMillis() >= saveFrom) Phase.RECORDING else Phase.WAITING,
@@ -82,6 +94,7 @@ class RecorderService : Service() {
                 stopAt = stopAt,
                 alarmAt = wake?.at?.let(Alarm::epochMs) ?: 0,
                 alarmWindow = wake?.windowMin ?: 0,
+                onsetMin = onset,
             )
         }
         val type = if (Build.VERSION.SDK_INT >= 30) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
@@ -181,6 +194,13 @@ class RecorderService : Service() {
         var nightDir: File? = null
         val phrases = AtomicInteger()
         val sounds = AtomicInteger()
+        val unsure = AtomicInteger()
+        val takeSamples = Prefs(this).soundSamples
+        /** Starts (ms) of the clips waiting to be heard, oldest first: the gate waits for them. */
+        val unheard = java.util.concurrent.ConcurrentLinkedQueue<Long>()
+        var asleepNoted = false
+        /** What the notification last showed: minutes of quiet while awake, -1 once asleep. */
+        var lastStatus = -1
         // Classifying a long clip takes a moment, so it happens off the thread that reads the mic.
         val saver = Executors.newSingleThreadExecutor()
         val classifier = (classifierFactory ?: YamnetClassifier::createOrFallback)(this)
@@ -188,7 +208,7 @@ class RecorderService : Service() {
         val buf = ShortArray(rate / 10)
         var lastUi = 0L
         var lastPhase = Recorder.state.value.phase
-        val streamStart = System.currentTimeMillis()
+        var streamStart = System.currentTimeMillis()
         var samples = 0L
         // Clock of the audio itself: equals the wall clock for the mic, runs faster for test input.
         fun audioNow() = maxOf(System.currentTimeMillis(), streamStart + samples * 1000 / rate)
@@ -204,6 +224,8 @@ class RecorderService : Service() {
             runCatching { Nights.appendMinute(dir, m) }.onFailure { Log.w(TAG, "Activity write failed", it) }
             val snore = NightSummary.of(minutes).snoreMinutes
             Recorder.update { it.copy(snoreMinutes = snore) }
+            // Snoring for a good part of the minute: asleep, whatever was said before.
+            if (m.snoreS >= SNORE_ASLEEP_S) gate?.heardSnoring(LocalDateTime.ofInstant(Instant.ofEpochMilli(audioNow()), zone))
             val w = wake
             if (w != null && rangAt != w.at) {
                 val now = LocalDateTime.ofInstant(Instant.ofEpochMilli(audioNow()), zone)
@@ -224,29 +246,64 @@ class RecorderService : Service() {
             // Awake and telling a dream to the phone: not sleep talk.
             if (Recorder.heardAwake(at, at + (ep.durationS * 1000).toLong())) return
             val dir = nightDir ?: Nights.dirFor(this, plan.saveFrom).also { nightDir = it }
+            unheard.add(at)
             saver.execute {
-                runCatching {
-                    // Silence and steady noise (a fan, hiss): not worth a clip.
-                    val sound = classifier.classify(ep.audio, ep.sampleRate) ?: return@runCatching
-                    if (sound.kind != SoundKind.SPEECH) {
-                        // Other sounds only when asked for; snoring is counted by the minute anyway.
-                        if (!Prefs(this).saveSounds || !policy.keep(sound.kind, start)) return@runCatching
-                        Nights.save(dir, start, ep, sound)
-                        val n = sounds.incrementAndGet()
-                        Recorder.update { it.copy(sounds = n) }
-                    } else {
-                        // Only the voice: the noise around a phrase is cut off, phrases far apart
-                        // in one long clip are saved separately.
-                        for (piece in VoiceTrim.pieces(ep.audio, ep.sampleRate)) {
-                            val pieceAt = start.plusNanos((piece.fromS * 1e9).toLong())
-                            val clip = Episode(ep.startS + piece.fromS, ep.sampleRate, piece.audio, ep.peakDb, ep.activeS)
-                            Nights.save(dir, pieceAt, clip, sound)
+                try { runCatching {
+                    val g = gate
+                    // 1. The voice: the noise around a phrase is cut off, phrases far apart are
+                    // separate pieces, and each piece is judged on its own (a long clip of hiss
+                    // gave the network too many chances to hear "speech" somewhere).
+                    var phrase = false
+                    for (piece in VoiceTrim.pieces(ep.audio, ep.sampleRate)) {
+                        val heard = classifier.listen(piece.audio, ep.sampleRate)
+                        val voice = heard.voiceClass ?: continue
+                        if (voice.kind == SoundKind.SPEECH) phrase = true
+                        val pieceAt = start.plusNanos((piece.fromS * 1e9).toLong())
+                        if (g != null && !g.asleep(pieceAt)) {
+                            // Talking before sleep: it tells when they fall asleep, but is not kept.
+                            if (voice.kind == SoundKind.SPEECH) g.heardSpeech(pieceAt)
+                            Nights.note(dir, pieceAt, "до сна", heard)
+                            continue
+                        }
+                        val clip = Episode(ep.startS + piece.fromS, ep.sampleRate, piece.audio, ep.peakDb, ep.activeS)
+                        val f = Nights.save(dir, pieceAt, clip, voice)
+                        Nights.note(dir, pieceAt, f.name, heard)
+                        val pieceMs = at + (piece.fromS * 1000).toLong()
+                        if (voice.kind == SoundKind.SPEECH) {
                             val n = phrases.incrementAndGet()
-                            Recorder.update { it.copy(clips = n, lastClipAt = at + (piece.fromS * 1000).toLong()) }
+                            Recorder.update { it.copy(clips = n, lastClipAt = pieceMs) }
+                        } else {
+                            val n = unsure.incrementAndGet()
+                            Recorder.update { it.copy(unsure = n) }
                         }
                     }
+                    // 2. No phrase: a sample of snoring or a knock, never silence or steady noise
+                    // (a bit of snoring that might be a voice does not hide the snoring itself).
+                    if (!phrase) {
+                        val heard = classifier.listen(ep.audio, ep.sampleRate)
+                        val sound = heard.sound
+                        if (sound == null) {
+                            Nights.note(dir, start, Nights.NOISE, heard)
+                            return@runCatching
+                        }
+                        if (sound.kind == SoundKind.SNORE) g?.heardSnoring(start)
+                        val outcome = when {
+                            g != null && !g.asleep(start) -> "до сна"
+                            !takeSamples -> "образцы выключены"
+                            !policy.keep(sound.kind, start) -> "хватит образцов"
+                            else -> null
+                        }
+                        if (outcome != null) {
+                            Nights.note(dir, start, outcome, heard)
+                            return@runCatching
+                        }
+                        val f = Nights.save(dir, start, ep, sound)
+                        Nights.note(dir, start, f.name, heard)
+                        val n = sounds.incrementAndGet()
+                        Recorder.update { it.copy(sounds = n) }
+                    }
                     main.post { Notifications.refreshRecording(this) }
-                }.onFailure { Log.w(TAG, "Save failed", it) }
+                }.onFailure { Log.w(TAG, "Save failed", it) } } finally { unheard.poll() }
             }
         }
 
@@ -257,6 +314,11 @@ class RecorderService : Service() {
                 if (n > 0) {
                     samples += n
                     detector.process(buf, n).forEach(::keep)
+                } else {
+                    // The mic gave nothing (lost, or taken by a call): the sound's clock stood still
+                    // while time went on. Catch up, or every later clip would be dated too early.
+                    val lag = System.currentTimeMillis() - (streamStart + samples * 1000 / rate)
+                    if (lag > CLOCK_SLIP_MS) streamStart += lag
                 }
 
                 val now = audioNow()
@@ -286,9 +348,35 @@ class RecorderService : Service() {
                     val floor = detector.floorDb
                     val level = if (floor == null) 0f
                     else ((detector.lastDb - floor) / (config.thresholdDb * 2)).toFloat().coerceIn(0f, 1f)
-                    Recorder.update { it.copy(phase = phase, level = level, calibrated = floor != null) }
-                    if (phase != lastPhase) {
+                    // Asleep after the quiet only as far as every sound before it has been heard:
+                    // a phrase still being recorded or classified may be talk that ends the quiet.
+                    val heardTo = minOf(
+                        now,
+                        detector.episodeStartS?.let { streamStart + (it * 1000).toLong() } ?: now,
+                        unheard.peek() ?: now,
+                    )
+                    val nowDt = LocalDateTime.ofInstant(Instant.ofEpochMilli(heardTo), zone)
+                    val g = gate
+                    val since = if (phase == Phase.RECORDING) g?.asleepSince(nowDt) else null
+                    val quiet = if (since == null && g != null) g.quietMinutes(nowDt) else 0
+                    if (since != null && !asleepNoted) {
+                        asleepNoted = true
+                        // With speech kept from the start there is no moment to note.
+                        if (Recorder.state.value.onsetMin > 0) {
+                            val dir = nightDir ?: Nights.dirFor(this, plan.saveFrom).also { nightDir = it }
+                            runCatching { Nights.setAsleep(dir, since) }
+                            EventLog.add(this, "Уснули ≈ ${since.toLocalTime().withSecond(0).withNano(0)} (${g?.reason?.text ?: ""})")
+                            main.post { SleepTile.update(this) }
+                        }
+                    }
+                    val asleepMs = since?.atZone(zone)?.toInstant()?.toEpochMilli() ?: 0L
+                    Recorder.update {
+                        it.copy(phase = phase, level = level, calibrated = floor != null, asleepAt = asleepMs, quietMin = quiet)
+                    }
+                    val status = if (since != null || g == null) -1 else quiet
+                    if (phase != lastPhase || status != lastStatus) {
                         lastPhase = phase
+                        lastStatus = status
                         main.post { Notifications.refreshRecording(this) }
                     }
                 }
@@ -311,14 +399,16 @@ class RecorderService : Service() {
     }
 
     private fun finishSession(clips: Int, sounds: Int = 0, snoreMinutes: Int = 0) {
+        val asleepAt = Recorder.state.value.let { if (it.onsetMin > 0) it.asleepAt else 0L }
         running = false
         worker = null
+        gate = null
         Prefs(this).sessionOpen = false
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
         Recorder.reset()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        if (clips > 0 || sounds > 0 || snoreMinutes > 0) Notifications.morning(this, clips, sounds, snoreMinutes)
+        if (clips > 0 || sounds > 0 || snoreMinutes > 0) Notifications.morning(this, clips, sounds, snoreMinutes, asleepAt)
         Scheduler.sync(this)
         SleepTile.update(this)
         stopSelf()
@@ -331,6 +421,8 @@ class RecorderService : Service() {
 
     companion object {
         const val ACTION_STOP = "sonnik.STOP"
+        /** "We are asleep": keep speech from now on. */
+        const val ACTION_ASLEEP = "sonnik.ASLEEP"
         const val EXTRA_NOW = "now"
         /** Debug builds only: name of a WAV file in the app's files dir to play instead of the mic. */
         const val EXTRA_DEMO_WAV = "demo_wav"
@@ -338,6 +430,10 @@ class RecorderService : Service() {
         private const val SENSITIVITY_DB = 4.0
         /** How often a running session re-reads the wake-up time and the end of the night. */
         private const val SETTINGS_EVERY_MS = 5_000L
+        /** Seconds of snoring in a minute that mean the sleepers are asleep. */
+        private const val SNORE_ASLEEP_S = 10.0
+        /** The sound's clock may fall this far behind the wall clock before it is moved on. */
+        private const val CLOCK_SLIP_MS = 1_000L
 
         /** Lets tests use the rule-based classifier instead of the neural one. */
         @VisibleForTesting

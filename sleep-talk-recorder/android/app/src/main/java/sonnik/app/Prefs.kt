@@ -46,12 +46,20 @@ class Prefs(context: Context) {
         set(v) = sp.edit().putString("rangFor", v?.toString()).apply()
 
     /**
-     * Also save snoring, coughs, creaks and the street, not only speech. Off by default: most
-     * nights are about what was said, and other sounds fill the list. Snoring is counted either way.
+     * Samples of snoring, coughs, creaks and knocks: a few of each kind a night (see ClipPolicy).
+     * White noise and silence are never kept.
      */
-    var saveSounds: Boolean
-        get() = sp.getBoolean("saveSounds", false)
-        set(v) = sp.edit().putBoolean("saveSounds", v).apply()
+    var soundSamples: Boolean
+        get() = sp.getBoolean("soundSamples", true)
+        set(v) = sp.edit().putBoolean("soundSamples", v).apply()
+
+    /**
+     * Minutes without a phrase after which the sleepers count as asleep and speech is kept
+     * (talking before sleep is not); 0 keeps speech from the start of the night.
+     */
+    var onsetMin: Int
+        get() = sp.getInt("onsetMin", 20)
+        set(v) = sp.edit().putInt("onsetMin", v).apply()
 
     /** When the last recording session started (manual or automatic), or null. */
     var lastSessionAt: LocalDateTime?

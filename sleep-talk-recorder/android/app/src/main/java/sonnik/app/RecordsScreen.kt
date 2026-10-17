@@ -98,25 +98,59 @@ private class ClipPlayer {
         private set
     private var mp: MediaPlayer? = null
 
+    /** The clips still to play after the current one ("listen in a row"). */
+    private var queue: List<File> = emptyList()
+    /** The night being played through in a row, if any. */
+    var playingAll by mutableStateOf<File?>(null)
+        private set
+
     fun toggle(f: File) {
         val same = current == f
         stop()
         if (same) return
+        play(f)
+    }
+
+    /** Plays [files] one after the other; [night] marks which night's button shows "stop". */
+    fun playAll(night: File, files: List<File>) {
+        stop()
+        if (files.isEmpty()) return
+        queue = files.drop(1)
+        playingAll = night
+        play(files.first())
+    }
+
+    private fun play(f: File) {
         val p = MediaPlayer()
         val ok = runCatching {
             p.setDataSource(f.path)
-            p.setOnCompletionListener { stop() }
+            p.setOnCompletionListener { next() }
             p.prepare()
             p.start()
         }.isSuccess
         if (!ok) {
-            p.release() // a damaged or deleted file: nothing to play
+            p.release() // a damaged or deleted file: skip it
+            next()
             return
         }
         if (speed != 1f) runCatching { p.playbackParams = p.playbackParams.setSpeed(speed) }
         mp = p
         current = f
+        progress = 0f
+        positionMs = 0
         durationMs = p.duration.coerceAtLeast(0)
+    }
+
+    private fun next() {
+        val rest = queue
+        mp?.release()
+        mp = null
+        if (rest.isEmpty()) {
+            stop()
+            return
+        }
+        queue = rest.drop(1)
+        play(rest.first())
     }
 
     fun tick() {
@@ -148,6 +182,8 @@ private class ClipPlayer {
     fun stop() {
         mp?.release()
         mp = null
+        queue = emptyList()
+        playingAll = null
         current = null
         progress = 0f
         positionMs = 0
@@ -255,6 +291,7 @@ fun RecordsScreen() {
                 onDeleteClip = { pending = PendingDelete.OneClip(it) },
                 // The whole night goes, not only the clips the filter shows.
                 onDeleteNight = { pending = PendingDelete.WholeNight(all?.firstOrNull { it.dir == night.dir } ?: night) },
+                onReport = { shareReport(ctx, all?.firstOrNull { it.dir == night.dir } ?: night) },
             )
         }
     }
@@ -295,12 +332,14 @@ private fun NightCard(
     onShare: (Clip) -> Unit,
     onDeleteClip: (Clip) -> Unit,
     onDeleteNight: () -> Unit,
+    onReport: () -> Unit,
 ) {
-    // Phrases come first. A night can also hold dozens of snoring samples, creaks and street
-    // noises; they wait behind one row so they do not bury the phrases.
+    // Sure phrases first. Unclear bits are folded away: most are not worth the time. The few
+    // samples of snoring and knocks stay open, they are the night's other story.
     val speech = night.clips.filter { it.sound.kind == SoundKind.SPEECH }
-    val others = night.clips.filter { it.sound.kind != SoundKind.SPEECH }
-    var othersOpen by rememberSaveable(night.dir.name) { mutableStateOf(false) }
+    val unclear = night.clips.filter { it.sound.kind == SoundKind.UNSURE }
+    val samples = night.clips.filter { it.sound.kind != SoundKind.SPEECH && it.sound.kind != SoundKind.UNSURE }
+    var unclearOpen by rememberSaveable(night.dir.name) { mutableStateOf(false) }
     Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Palette.panel)) {
         Column(Modifier.fillMaxWidth().padding(vertical = 16.dp)) {
             Row(
@@ -311,7 +350,8 @@ private fun NightCard(
                     Text(night.title, style = MaterialTheme.typography.titleMedium)
                     val sum = night.summary
                     Text(
-                        "с ${night.start.format(timeFmt)} · " +
+                        "с ${night.start.format(timeFmt)}" +
+                            (night.asleepAt?.let { " · уснули ≈ ${it.format(timeFmt)}" } ?: "") + " · " +
                             (if (night.clips.isEmpty()) "тихо" else phrases(night.phrases)) +
                             (if (night.sounds > 0) " · ${soundsText(night.sounds)}" else "") +
                             (if (sum.snoreMinutes > 0) " · храп ${minutesText(sum.snoreMinutes)}" else "") +
@@ -319,7 +359,7 @@ private fun NightCard(
                         style = MaterialTheme.typography.bodySmall, color = Palette.muted,
                     )
                 }
-                if (!live) NightMenu(onDeleteNight)
+                if (!live) NightMenu(onDeleteNight, onReport)
             }
             if (night.minutes.size >= 2) NightTimeline(night)
             if (night.clips.isEmpty()) {
@@ -329,40 +369,66 @@ private fun NightCard(
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
                 )
             }
+            if (speech.size >= 2) {
+                // Several phrases: one tap plays them all, at the chosen speed.
+                val all = player.playingAll == night.dir
+                TextButton(
+                    onClick = { if (all) player.stop() else player.playAll(night.dir, speech.map { it.file }) },
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                ) { Text(if (all) "Остановить" else "Слушать подряд · ${phrases(speech.size)}") }
+            }
             ClipList(speech, player, onShare, onDeleteClip)
-            if (showOthers) {
-                ClipList(others, player, onShare, onDeleteClip)
-            } else if (others.isNotEmpty()) {
-                if (speech.isNotEmpty()) HorizontalDivider(Modifier.padding(horizontal = 20.dp))
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable { othersOpen = !othersOpen }
-                        .padding(horizontal = 20.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "Другие звуки · ${others.size}", Modifier.weight(1f),
-                        color = Palette.muted, style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Text(
-                        if (othersOpen) "Скрыть" else "Показать",
-                        color = Palette.amber, style = MaterialTheme.typography.labelLarge,
-                    )
+            if (unclear.isNotEmpty()) {
+                if (showOthers) {
+                    ClipList(unclear, player, onShare, onDeleteClip)
+                } else {
+                    if (speech.isNotEmpty()) HorizontalDivider(Modifier.padding(horizontal = 20.dp))
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { unclearOpen = !unclearOpen }
+                            .padding(horizontal = 20.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "Неразборчиво · ${unclear.size}", Modifier.weight(1f),
+                            color = Palette.muted, style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            if (unclearOpen) "Скрыть" else "Показать",
+                            color = Palette.amber, style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
+                    if (unclearOpen) ClipList(unclear, player, onShare, onDeleteClip)
                 }
-                if (othersOpen) ClipList(others, player, onShare, onDeleteClip)
+            }
+            if (samples.isNotEmpty()) {
+                if (speech.isNotEmpty() || unclear.isNotEmpty()) HorizontalDivider(Modifier.padding(horizontal = 20.dp))
+                Text(
+                    "Храп, стуки и другие звуки · ${samples.size}",
+                    color = Palette.muted, style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 4.dp),
+                )
+                ClipList(samples, player, onShare, onDeleteClip)
             }
         }
     }
 }
 
-/** Deleting a whole night is rare and final, so it waits in a menu away from the title. */
+/** The night's report, and deleting the night (rare and final), wait in a menu away from the title. */
 @Composable
-private fun NightMenu(onDeleteNight: () -> Unit) {
+private fun NightMenu(onDeleteNight: () -> Unit, onReport: () -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         IconButton(onClick = { open = true }) { Icon(Icons.Filled.MoreVert, "Ещё", tint = Palette.muted) }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text("Отправить отчёт о ночи") },
+                onClick = {
+                    open = false
+                    onReport()
+                },
+            )
             DropdownMenuItem(
                 text = { Text("Удалить ночь") },
                 onClick = {
@@ -431,6 +497,15 @@ private fun ClipRow(clip: Clip, player: ClipPlayer, onShare: (Clip) -> Unit, onD
             }
         }
     }
+}
+
+/** Every decision of the night with the classifier's scores: to send and tune the recogniser. */
+private fun shareReport(ctx: Context, night: Night) {
+    val send = Intent(Intent.ACTION_SEND)
+        .setType("text/plain")
+        .putExtra(Intent.EXTRA_SUBJECT, "Сонник, ${night.title}")
+        .putExtra(Intent.EXTRA_TEXT, Nights.report(night))
+    runCatching { ctx.startActivity(Intent.createChooser(send, "Отправить отчёт о ночи")) }
 }
 
 private fun share(ctx: Context, clip: Clip) {

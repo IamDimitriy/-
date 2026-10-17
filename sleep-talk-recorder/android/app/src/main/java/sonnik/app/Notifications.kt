@@ -93,32 +93,48 @@ object Notifications {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-    fun recording(ctx: Context, s: RecorderState) = NotificationCompat.Builder(ctx, CH_RECORDING)
-        .setSmallIcon(R.drawable.ic_notification)
-        .setContentTitle(
-            if (s.phase == Phase.WAITING) "Запись начнётся в ${time(s.saveFrom)}"
-            else "Слушаю до ${time(s.stopAt)}"
-        )
-        .setContentText(
-            when {
-                s.phase == Phase.WAITING -> "Микрофон включён, сохранять буду только ночные фразы"
-                s.clips == 0 -> "Сохраняю только то, что вы скажете"
-                else -> "Записано: ${phrases(s.clips)}, последняя в ${time(s.lastClipAt)}"
-            }
-        )
-        .setOngoing(true)
-        .setSilent(true)
-        .setCategory(NotificationCompat.CATEGORY_SERVICE)
-        .setContentIntent(openApp(ctx))
-        .addAction(
-            0, "Остановить",
-            PendingIntent.getService(
-                ctx, 20, Intent(ctx, RecorderService::class.java).setAction(RecorderService.ACTION_STOP),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    fun recording(ctx: Context, s: RecorderState): android.app.Notification {
+        val b = NotificationCompat.Builder(ctx, CH_RECORDING)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(
+                when {
+                    s.phase == Phase.WAITING -> "Запись начнётся в ${time(s.saveFrom)}"
+                    s.waitingForSleep -> "Жду, пока уснёте"
+                    else -> "Слушаю до ${time(s.stopAt)}"
+                }
             )
-        )
-        .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-        .build()
+            .setContentText(
+                when {
+                    s.phase == Phase.WAITING -> "Микрофон включён, сохранять буду только ночные фразы"
+                    s.waitingForSleep -> "Разговоры до сна не сохраняются · тишина ${s.quietMin} из ${s.onsetMin} мин"
+                    s.clips == 0 -> "Сохраняю только то, что вы скажете во сне"
+                    else -> "Записано: ${phrases(s.clips)}, последняя в ${time(s.lastClipAt)}"
+                }
+            )
+            .setOngoing(true)
+            .setSilent(true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setContentIntent(openApp(ctx))
+        if (s.waitingForSleep) {
+            b.addAction(
+                0, "Мы спим",
+                PendingIntent.getService(
+                    ctx, 21, Intent(ctx, RecorderService::class.java).setAction(RecorderService.ACTION_ASLEEP),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                ),
+            )
+        }
+        return b
+            .addAction(
+                0, "Остановить",
+                PendingIntent.getService(
+                    ctx, 20, Intent(ctx, RecorderService::class.java).setAction(RecorderService.ACTION_STOP),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
+            )
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .build()
+    }
 
     fun refreshRecording(ctx: Context) {
         if (Recorder.state.value.phase == Phase.IDLE) return
@@ -194,13 +210,13 @@ object Notifications {
 
     fun cancelStartPrompt(ctx: Context) = NotificationManagerCompat.from(ctx).cancel(START_ID)
 
-    fun morning(ctx: Context, clips: Int, sounds: Int = 0, snoreMinutes: Int = 0) {
+    fun morning(ctx: Context, clips: Int, sounds: Int = 0, snoreMinutes: Int = 0, asleepAt: Long = 0) {
         val snore = (if (sounds > 0) " · ${soundsText(sounds)}" else "") +
             (if (snoreMinutes > 0) " · храп ${minutesText(snoreMinutes)}" else "")
         val n = NotificationCompat.Builder(ctx, CH_INFO)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("За ночь: ${phrases(clips)}$snore")
-            .setContentText("Нажмите, чтобы послушать")
+            .setContentText((if (asleepAt > 0) "Уснули ≈ ${time(asleepAt)} · " else "") + "Нажмите, чтобы послушать")
             .setContentIntent(openApp(ctx, records = true))
             .addAction(
                 0, "Записать сон",

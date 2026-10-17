@@ -171,21 +171,66 @@ class ScreensTest {
         waitForText("Ночь на 9 октября")
         // Both the overall summary and the night's header say it.
         assertEquals(2, compose.onAllNodesWithText("1 фраза · 2 звука", substring = true).fetchSemanticsNodes().size)
-        // The phrase is in sight; the other sounds wait behind one row.
+        // The phrase first, then the few samples of other sounds, in sight too.
         compose.onNodeWithText("01:00:00").assertExists()
-        compose.onNodeWithText("Улица · собака · 3 с").assertDoesNotExist()
-        compose.onNodeWithText("Другие звуки · 2").performClick()
+        compose.onNodeWithText("Храп, стуки и другие звуки · 2").assertExists()
         compose.onNodeWithText("Улица · собака · 3 с").assertExists()
         compose.onNodeWithText("03:00:00").assertExists()
-        compose.onNodeWithText("Другие звуки · 2").performClick()
-        compose.onNodeWithText("03:00:00").assertDoesNotExist()
-        // A filter for one kind of sound shows its clips right away.
+        // A filter for one kind of sound shows only its clips.
         compose.onNodeWithText("Улица 1").performClick()
         compose.onNodeWithText("02:00:00").assertExists()
         compose.onNodeWithText("01:00:00").assertDoesNotExist()
         compose.onNodeWithText("03:00:00").assertDoesNotExist()
         compose.onNodeWithText("Все").performClick()
         compose.onNodeWithText("01:00:00").assertExists()
+    }
+
+    @Test fun unclearBitsAreFoldedAwayAndPhrasesPlayInARow() {
+        val dir = Nights.dirFor(ctx, LocalDateTime.parse("2026-10-09T00:00"))
+        val ep = Episode(0.0, 16000, FloatArray(16000 * 3), -20.0, 3.0)
+        Nights.save(dir, LocalDateTime.parse("2026-10-09T01:00:00"), ep)
+        Nights.save(dir, LocalDateTime.parse("2026-10-09T01:10:00"), ep)
+        Nights.save(dir, LocalDateTime.parse("2026-10-09T01:20:00"), ep, SoundClass(SoundKind.UNSURE))
+        Nights.setAsleep(dir, LocalDateTime.parse("2026-10-09T00:42:00"))
+        records()
+        waitForText("Ночь на 9 октября")
+        compose.onNodeWithText("уснули ≈ 00:42", substring = true).assertExists()
+        compose.onNodeWithText("Слушать подряд · 2 фразы").assertExists()
+        compose.onNodeWithText("01:10:00").assertExists()
+        compose.onNodeWithText("01:20:00").assertDoesNotExist()
+        compose.onNodeWithText("Неразборчиво · 1").performClick()
+        compose.onNodeWithText("01:20:00").assertExists()
+    }
+
+    @Test fun beforeSleepTheScreenWaitsForIt() {
+        val now = System.currentTimeMillis()
+        Recorder.update { RecorderState(Phase.RECORDING, saveFrom = now, stopAt = now + 3_600_000, onsetMin = 20, quietMin = 7) }
+        night()
+        compose.onNodeWithText("Ждём, пока уснёте").assertIsDisplayed()
+        compose.onNodeWithText("после 20 минут тишины", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Тишина уже 7 мин", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Мы уже спим").assertIsDisplayed()
+        compose.onNodeWithText("Остановить").assertIsDisplayed()
+    }
+
+    @Test fun afterFallingAsleepTheScreenSaysWhen() {
+        val now = System.currentTimeMillis()
+        Recorder.update {
+            RecorderState(Phase.RECORDING, saveFrom = now - 3_600_000, stopAt = now + 3_600_000, onsetMin = 20, asleepAt = now - 600_000)
+        }
+        night()
+        compose.onNodeWithText("Слушаю").assertIsDisplayed()
+        compose.onNodeWithText("Уснули ≈", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Мы уже спим").assertDoesNotExist()
+    }
+
+    @Test fun choosingWhenSpeechCounts() {
+        night()
+        compose.onNodeWithText("Речь — когда уснёте").performScrollTo()
+        assertEquals(20, Prefs(ctx).onsetMin)
+        compose.onNodeWithText("сразу").performScrollTo().performClick()
+        assertEquals(0, Prefs(ctx).onsetMin)
+        compose.onNodeWithText("Образцы храпа, стуков, сопения").performScrollTo().assertIsDisplayed()
     }
 
     @Test fun noSensitivitySetting() {

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Scripted demo on an Android emulator (run from sleep-talk-recorder/android).
 #  0. The first launch, before anything is allowed: walks the "Чтобы всё работало само" card.
-#  1. Records a prepared "night" (demo/night.wav played instead of the mic): three phrases and snoring.
+#  1. Records a prepared "night" (demo/night.wav played instead of the mic): a phrase said before
+#     falling asleep (not kept), snoring (they are asleep now, one sample kept), two phrases in sleep.
 #  2. Checks the automatic start: schedules the night two minutes ahead, turns the screen off
 #     and waits for the app to switch the microphone on by itself.
 #  3. The alarm over the lock screen.  4. A dream written down after waking.
@@ -116,12 +117,13 @@ shot 01-home
 adb shell screenrecord --time-limit 180 --bit-rate 3000000 /sdcard/demo.mp4 &
 REC=$!
 sleep 2
+# Asleep after one minute without talk: the demo night is too short for the usual 20.
 log "start recording the demo night"
-app --es demo_wav night.wav
+app --ei demo_onset_min 1 --es demo_wav night.wav
 sleep 4
-shot 02-listening
+shot 02-waiting-for-sleep
 sleep 14
-shot 03-first-phrase
+shot 03-talk-before-sleep
 sleep 50
 shot 03b-snoring
 adb shell cmd statusbar expand-notifications
@@ -140,7 +142,7 @@ adb shell cmd statusbar collapse
 app --ez records true
 sleep 3
 shot 07-records
-tap_on "Слушать"
+tap_on "Слушать подряд" contains || tap_on "Слушать"
 sleep 2
 shot 08-playing
 sleep 6
@@ -150,14 +152,21 @@ adb shell run-as $PKG ls -lR files/nights >> "$LOG" 2>&1
 # adb joins its arguments with spaces, so the remote command is quoted as one string.
 CLIP_NAMES=$(adb shell "run-as $PKG sh -c 'ls files/nights/*/*.wav'" 2>/dev/null)
 CLIPS=$(echo "$CLIP_NAMES" | grep -c '__speech')
-# Only the voice is kept by default: snoring is counted by the minute, not saved as clips.
-OTHERS=$(echo "$CLIP_NAMES" | grep '\.wav' | grep -vc '__speech')
-log "clips kept from the demo night: $CLIPS phrases (expected 3), $OTHERS other sounds (expected 0)"
+UNCLEAR=$(echo "$CLIP_NAMES" | grep -c '__unsure')
+SNORES=$(echo "$CLIP_NAMES" | grep -c '__snore')
+OTHERS=$(echo "$CLIP_NAMES" | grep '\.wav' | grep -v '__speech' | grep -v '__unsure' | grep -vc '__snore')
+log "clips kept from the demo night: $CLIPS phrases (expected 2), $UNCLEAR unclear, $SNORES snoring samples (expected 1), $OTHERS other samples"
 echo "$CLIP_NAMES" >> "$LOG"
+# Every decision with what the network heard, as in the night's report.
+NOTES=$(adb shell "run-as $PKG sh -c 'cat files/nights/*/clips.csv'" 2>/dev/null)
+echo "$NOTES" >> "$LOG"
+BEFORE_SLEEP=$(echo "$NOTES" | grep -c 'до сна')
+ASLEEP=$(adb shell "run-as $PKG cat files/events.log" 2>/dev/null | grep 'Уснули' | head -1)
+log "talk before sleep: $BEFORE_SLEEP pieces not kept; ${ASLEEP:-falling asleep NOT noted}"
 
 # ---------- Part 2: automatic start with the screen off ----------
 log "schedule tonight two minutes from now, then lock the phone"
-app --ez records false --ei demo_schedule_in 2 --ei demo_length 3
+app --ez records false --ei demo_schedule_in 2 --ei demo_length 3 --ei demo_onset_min 20
 sleep 4
 shot 09-scheduled
 adb shell dumpsys alarm | grep -A3 "$PKG" | head -20 >> "$LOG"
@@ -310,8 +319,10 @@ grep -E "Sonnik|FullScreen|FSI|$PKG" "$OUT/logcat.txt" > "$OUT/logcat-app.txt"
 log "done"
 
 FAILED=0
-[ "$CLIPS" = 3 ] || { log "FAIL: expected 3 phrases, got $CLIPS"; FAILED=1; }
-[ "$OTHERS" = 0 ] || { log "FAIL: sounds other than speech were saved although only the voice is asked for"; FAILED=1; }
+[ "$CLIPS" = 2 ] || { log "FAIL: expected 2 phrases (the first one is talk before sleep), got $CLIPS"; FAILED=1; }
+[ "$BEFORE_SLEEP" -ge 1 ] || { log "FAIL: the phrase before sleep was not recognised as talk before sleep"; FAILED=1; }
+[ "$SNORES" -ge 1 ] || { log "FAIL: no sample of the snoring was kept"; FAILED=1; }
+[ -n "$ASLEEP" ] || { log "FAIL: falling asleep was not noted"; FAILED=1; }
 [ -n "$STARTED" ] || { log "FAIL: recording did not start by itself"; FAILED=1; }
 [ -n "$RANG" ] || { log "FAIL: the alarm did not ring"; FAILED=1; }
 [ -n "$DREAM_SAVED" ] || { log "FAIL: the dream was not saved"; FAILED=1; }

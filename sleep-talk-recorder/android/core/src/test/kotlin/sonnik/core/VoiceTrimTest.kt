@@ -31,11 +31,9 @@ class VoiceTrimTest {
         assertEquals(1, VoiceTrim.pieces(clip, sr).size)
     }
 
-    @Test fun clipWithoutClearVoiceIsKeptWhole() {
-        val clip = s.noise(10.0, 0.01)
-        val pieces = VoiceTrim.pieces(clip, sr)
-        assertEquals(1, pieces.size)
-        assertEquals(clip.size, pieces.single().audio.size)
+    @Test fun hissWithoutAVoiceGivesNothing() {
+        assertTrue(VoiceTrim.pieces(s.noise(10.0, 0.01), sr).isEmpty(), "white noise is not kept")
+        assertTrue(VoiceTrim.pieces(FloatArray(100), sr).isEmpty())
     }
 
     @Test fun marginsKeepTheFirstSyllable() {

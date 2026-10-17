@@ -10,6 +10,8 @@ import java.time.LocalTime
  */
 object DemoHooks {
     fun handle(ctx: Context, intent: Intent) {
+        // Minutes of quiet that mean "asleep": the demo night is too short for the usual 20.
+        intent.getIntExtra("demo_onset_min", -1).takeIf { it >= 0 }?.let { Prefs(ctx).onsetMin = it }
         intent.getStringExtra("demo_wav")?.let { Recorder.start(ctx, now = true, demoWav = it) }
         if (intent.getBooleanExtra("demo_stop", false)) Recorder.stop(ctx)
         val inMinutes = intent.getIntExtra("demo_schedule_in", -1)

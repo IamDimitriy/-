@@ -80,7 +80,8 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
     var alarmWindow by remember { mutableIntStateOf(prefs.alarmWindow) }
     var setup by remember { mutableStateOf(Setup.items(ctx, auto || alarmOn)) }
     var skipped by remember { mutableStateOf(Scheduler.isTonightSkipped(ctx)) }
-    var saveSounds by remember { mutableStateOf(prefs.saveSounds) }
+    var soundSamples by remember { mutableStateOf(prefs.soundSamples) }
+    var onsetMin by remember { mutableIntStateOf(prefs.onsetMin) }
     var showLog by remember { mutableStateOf(false) }
     val ringing by AlarmService.ringing.collectAsStateWithLifecycle()
 
@@ -163,6 +164,7 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
             warning = warning,
             onStartNow = ::startNow,
             onStop = { Recorder.stop(ctx) },
+            onAsleep = { Recorder.asleep(ctx) },
             onCancelWaiting = {
                 // "Not tonight": also keep the midnight auto-start from switching it back on.
                 Recorder.stop(ctx)
@@ -242,12 +244,29 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
         }
 
         Section("Что сохранять") {
+            Column(Modifier.padding(vertical = 12.dp)) {
+                Text("Речь — когда уснёте")
+                Text(
+                    "Разговоры перед сном не сохраняются: запись речи начинается после стольких минут " +
+                        "тишины или как только послышится храп.",
+                    style = MaterialTheme.typography.bodySmall, color = Palette.muted,
+                )
+                FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(0 to "сразу", 10 to "10 мин", 20 to "20 мин", 30 to "30 мин").forEach { (m, label) ->
+                        FilterChip(
+                            selected = onsetMin == m,
+                            onClick = { onsetMin = m; prefs.onsetMin = m },
+                            label = { Text(label) },
+                        )
+                    }
+                }
+            }
+            HorizontalDivider()
             SettingRow(
-                "Другие звуки тоже",
-                "Храп, кашель, скрипы, улица. Без этого сохраняется только речь, а шум и тишина " +
-                    "отбрасываются. Храп считается в любом случае.",
+                "Образцы храпа, стуков, сопения",
+                "До трёх каждого вида за ночь, в разное время. Белый шум и тишина не сохраняются никогда.",
             ) {
-                Switch(checked = saveSounds, onCheckedChange = { saveSounds = it; prefs.saveSounds = it })
+                Switch(checked = soundSamples, onCheckedChange = { soundSamples = it; prefs.soundSamples = it })
             }
         }
 
@@ -270,7 +289,8 @@ fun NightScreen(onOpenRecords: () -> Unit, liveClock: Boolean = true) {
 
         Text(
             "Записи хранятся только на этом телефоне. Микрофон слушает всю ночь на максимальной " +
-                "чувствительности, а сохраняется только речь: шум вокруг фразы обрезается.",
+                "чувствительности. Сохраняется речь во сне (шум вокруг фразы обрезается, сомнительное — " +
+                "отдельно, в «Неразборчиво») и несколько образцов других звуков.",
             style = MaterialTheme.typography.bodySmall, color = Palette.muted,
         )
     }
@@ -333,6 +353,7 @@ private fun StatusCard(
     warning: String?,
     onStartNow: () -> Unit,
     onStop: () -> Unit,
+    onAsleep: () -> Unit,
     onCancelWaiting: () -> Unit,
     onSkip: (Boolean) -> Unit,
     onOpenRecords: () -> Unit,
@@ -344,11 +365,30 @@ private fun StatusCard(
     ) {
         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             when (state.phase) {
-                Phase.RECORDING -> {
+                Phase.RECORDING -> if (state.waitingForSleep) {
+                    // Talking before sleep: listening, but no speech is kept until they fall asleep.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PulseDot()
+                        Spacer(Modifier.width(10.dp))
+                        Text("Ждём, пока уснёте", style = MaterialTheme.typography.headlineSmall)
+                    }
+                    Text(
+                        "Разговоры до сна не сохраняются. Запись речи начнётся после ${state.onsetMin} минут " +
+                            "тишины или как только послышится храп. Тишина уже ${state.quietMin} мин.",
+                        color = Palette.muted,
+                    )
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = onAsleep) { Text("Мы уже спим") }
+                        OutlinedButton(onClick = onStop) { Text("Остановить") }
+                    }
+                } else {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         PulseDot()
                         Spacer(Modifier.width(10.dp))
                         Text("Слушаю", style = MaterialTheme.typography.headlineSmall)
+                    }
+                    if (state.onsetMin > 0 && state.asleepAt > 0) {
+                        Text("Уснули ≈ ${Notifications.time(state.asleepAt)}", color = Palette.muted)
                     }
                     Text(
                         (if (state.alarmAt > 0) "" else "До ${Notifications.time(state.stopAt)} · ") +

@@ -8,6 +8,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import sonnik.core.Episode
+import sonnik.core.Heard
 import sonnik.core.Minute
 import sonnik.core.SoundClass
 import sonnik.core.SoundKind
@@ -131,6 +132,33 @@ class NightsTest {
         assertEquals(listOf(0, 1, 2), night.minutes.map { it.index })
         assertEquals(1, night.summary.snoreMinutes)
         assertEquals(2.5, night.summary.speechS)
+    }
+
+    @Test fun theNightsReportTellsWhatWasHeard() {
+        val dir = Nights.dirFor(ctx, at("2026-10-09T00:00"))
+        val phrase = Nights.save(dir, at("2026-10-09T02:10:00"), ep(2.0))
+        Nights.save(dir, at("2026-10-09T02:20:00"), ep(1.0), SoundClass(SoundKind.UNSURE))
+        Nights.setAsleep(dir, at("2026-10-09T01:42:10"))
+        val voice = Heard(listOf(mapOf("Speech" to 0.9f), mapOf("Speech" to 0.8f)), SoundClass(SoundKind.SPEECH))
+        Nights.note(dir, at("2026-10-09T00:30:00"), "до сна", voice)
+        Nights.note(dir, at("2026-10-09T02:10:00"), phrase.name, voice)
+        repeat(100) {
+            val hiss = Heard(listOf(mapOf("White noise" to 0.7f, "Speech" to it / 1000f)), SoundClass(SoundKind.OTHER))
+            Nights.note(dir, at("2026-10-09T03:00:00").plusSeconds(it.toLong()), Nights.NOISE, hiss)
+        }
+        val night = Nights.list(ctx).single()
+        assertEquals(at("2026-10-09T01:42:10"), night.asleepAt)
+        assertEquals(listOf(1, 1, 0), listOf(night.phrases, night.unsure, night.sounds))
+        val report = Nights.report(night)
+        assertTrue("уснули ≈ 01:42" in report, report)
+        assertTrue("Фраз: 1, неразборчиво: 1, звуков: 0" in report, report)
+        assertTrue("00:30:00,до сна,0.85" in report, report)
+        assertTrue("02:10:00,${phrase.name},0.85" in report, report)
+        // Of the noise only the count and the bits closest to a voice.
+        assertTrue("Отброшено как шум: 100" in report, report)
+        assertEquals(60, report.lines().count { ",шум," in it })
+        assertTrue("03:01:39,шум,0.10" in report, report)
+        assertTrue("03:00:00,шум" !in report, report)
     }
 
     @Test fun deletingAClipAndANight() {

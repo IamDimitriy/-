@@ -2,6 +2,7 @@ package sonnik.app
 
 import android.content.Context
 import sonnik.core.Episode
+import sonnik.core.Heard
 import sonnik.core.Minute
 import sonnik.core.NightSummary
 import sonnik.core.SoundClass
@@ -27,6 +28,8 @@ data class Night(
     val clips: List<Clip>,
     /** Minute-by-minute sound statistics; empty for nights recorded before they existed. */
     val minutes: List<Minute> = emptyList(),
+    /** When the sleepers fell asleep (speech before it was not kept), if it was noted. */
+    val asleepAt: LocalDateTime? = null,
 ) {
     /**
      * The date this sleep belongs to: a night started at 23:30 on the 8th is "the night to the 9th",
@@ -42,10 +45,14 @@ data class Night(
 
     val summary: NightSummary get() = NightSummary.of(minutes)
 
+    /** Sure phrases. */
     val phrases: Int get() = clips.count { it.sound.kind == SoundKind.SPEECH }
 
-    /** Saved clips that are not speech. */
-    val sounds: Int get() = clips.size - phrases
+    /** Bits that may be a voice, kept apart from the phrases. */
+    val unsure: Int get() = clips.count { it.sound.kind == SoundKind.UNSURE }
+
+    /** Samples of other sounds: snoring, knocks, coughs. */
+    val sounds: Int get() = clips.size - phrases - unsure
 }
 
 /**
@@ -81,6 +88,55 @@ object Nights {
     }
 
     private const val ACTIVITY = "activity.csv"
+    private const val NOTES = "clips.csv"
+    private const val ASLEEP = "asleep.txt"
+    private val noteFmt = DateTimeFormatter.ofPattern("HH:mm:ss")
+
+    /**
+     * Writes down what was decided about a sound and what the classifier heard ("phrase file",
+     * "шум", "до сна"...), so a night's report can show why something was or was not kept.
+     */
+    fun note(nightDir: File, at: LocalDateTime, outcome: String, heard: Heard) {
+        val f = File(nightDir, NOTES)
+        if (!f.exists()) f.writeText("time,outcome,speech,heard\n")
+        val speech = String.format(java.util.Locale.ROOT, "%.2f", heard.speech)
+        f.appendText("${at.format(noteFmt)},$outcome,$speech,\"${heard.top().replace('"', '\'')}\"\n")
+    }
+
+    fun setAsleep(nightDir: File, at: LocalDateTime) = File(nightDir, ASLEEP).writeText(at.withNano(0).toString())
+
+    private fun asleepAt(nightDir: File): LocalDateTime? =
+        runCatching { LocalDateTime.parse(File(nightDir, ASLEEP).readText().trim()) }.getOrNull()
+
+    /**
+     * The night in text: what was kept, when they fell asleep, and the decisions with what the
+     * classifier heard. Noise is most of a night, so of it only the count and the bits that came
+     * closest to a voice: those tell whether the thresholds suit this room.
+     */
+    fun report(night: Night): String = buildString {
+        appendLine("Сонник, ${night.title}")
+        appendLine("Начало записи ${night.start.toLocalTime().withSecond(0)}" +
+            (night.asleepAt?.let { ", уснули ≈ ${it.toLocalTime().withSecond(0).withNano(0)}" } ?: ""))
+        appendLine("Фраз: ${night.phrases}, неразборчиво: ${night.unsure}, звуков: ${night.sounds}, храп ${night.summary.snoreMinutes} мин")
+        val notes = File(night.dir, NOTES)
+        if (!notes.exists()) return@buildString
+        val (noise, rest) = notes.readLines().drop(1).partition { it.split(',').getOrNull(1) == NOISE }
+        appendLine("Отброшено как шум: ${noise.size}")
+        appendLine()
+        appendLine("время,решение,голос,что услышано")
+        rest.takeLast(REPORT_LINES).forEach { appendLine(it) }
+        if (noise.isNotEmpty()) {
+            appendLine()
+            appendLine("Шум, больше всего похожий на голос:")
+            noise.sortedByDescending { it.split(',').getOrNull(2)?.toFloatOrNull() ?: 0f }
+                .take(REPORT_NOISE).sorted().forEach { appendLine(it) }
+        }
+    }
+
+    /** The outcome noted for silence and steady noise. */
+    const val NOISE = "шум"
+    private const val REPORT_LINES = 600
+    private const val REPORT_NOISE = 60
 
     /** Appends one minute of statistics to the night's activity.csv. */
     fun appendMinute(nightDir: File, m: Minute) {
@@ -101,7 +157,7 @@ object Nights {
             val clips = dir.listFiles { f -> f.name.endsWith(".wav") }.orEmpty()
                 .mapNotNull(::parseClip)
                 .sortedBy { it.at }
-            Night(dir, start, clips, minutes(dir))
+            Night(dir, start, clips, minutes(dir), asleepAt(dir))
         }.sortedByDescending { it.start }
 
     /**

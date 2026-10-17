@@ -93,21 +93,19 @@ class ClipPolicyTest {
         repeat(50) { assertTrue(p.keep(SoundKind.SPEECH, at("2026-10-09T03:00").plusSeconds(it.toLong()))) }
     }
 
-    @Test fun snoringIsSampledEveryTenMinutes() {
+    @Test fun aFewSamplesOfEachKindSpreadOverTheNight() {
         val p = ClipPolicy()
         assertTrue(p.keep(SoundKind.SNORE, at("2026-10-09T03:00")))
-        assertFalse(p.keep(SoundKind.SNORE, at("2026-10-09T03:05")))
-        assertTrue(p.keep(SoundKind.SNORE, at("2026-10-09T03:10")))
+        assertFalse(p.keep(SoundKind.SNORE, at("2026-10-09T03:10")), "too close to the last one")
+        assertTrue(p.keep(SoundKind.SNORE, at("2026-10-09T03:20")))
+        assertTrue(p.keep(SoundKind.MOVEMENT, at("2026-10-09T03:21")), "each kind has its own samples")
+        assertTrue(p.keep(SoundKind.SNORE, at("2026-10-09T03:40")))
+        assertFalse(p.keep(SoundKind.SNORE, at("2026-10-09T05:00")), "three of a kind are enough")
     }
 
-    @Test fun otherSoundsAreSampledPerKindAndCapped() {
-        val p = ClipPolicy(maxOtherPerNight = 3)
-        assertTrue(p.keep(SoundKind.STREET, at("2026-10-09T03:00")))
-        assertTrue(p.keep(SoundKind.MOVEMENT, at("2026-10-09T03:00:30")))
-        assertFalse(p.keep(SoundKind.STREET, at("2026-10-09T03:01")))
-        assertTrue(p.keep(SoundKind.STREET, at("2026-10-09T03:02")))
-        assertFalse(p.keep(SoundKind.COUGH, at("2026-10-09T04:00")), "cap reached")
-        assertTrue(p.keep(SoundKind.SPEECH, at("2026-10-09T04:00")))
+    @Test fun unclearSpeechIsNotSampled() {
+        val p = ClipPolicy(perKind = 1)
+        repeat(5) { assertTrue(p.keep(SoundKind.UNSURE, at("2026-10-09T03:00").plusSeconds(it.toLong()))) }
     }
 }
 

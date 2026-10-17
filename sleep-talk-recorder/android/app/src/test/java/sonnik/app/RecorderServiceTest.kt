@@ -16,6 +16,7 @@ import org.robolectric.Robolectric
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import sonnik.core.Episode
+import sonnik.core.Heard
 import sonnik.core.Minute
 import sonnik.core.SoundClass
 import sonnik.core.SoundKind
@@ -35,6 +36,8 @@ class RecorderServiceTest {
 
     @Before fun setUp() {
         ctx.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().clear().commit()
+        // Speech from the start: the tests that are about falling asleep set it themselves.
+        Prefs(ctx).onsetMin = 0
         shadowOf(ctx).grantPermissions(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
         Notifications.createChannels(ctx)
         Nights.root(ctx).deleteRecursively()
@@ -67,7 +70,6 @@ class RecorderServiceTest {
     private fun titles() = shadowOf(nm).allNotifications.map { it.extras.getCharSequence("android.title").toString() }
 
     @Test fun sortsPhrasesAndSnoringAndReportsInTheMorning() {
-        Prefs(ctx).saveSounds = true
         val input = FakeInput(TestAudio.night())
         RecorderService.inputFactory = { _, _ -> input }
         val service = start(now = true)
@@ -135,7 +137,6 @@ class RecorderServiceTest {
     }
 
     @Test fun snoringIsCountedMinuteByMinute() {
-        Prefs(ctx).saveSounds = true
         val audio = TestAudio.cat(TestAudio.noise(60.0), TestAudio.snoring(120.0), TestAudio.noise(30.0))
         RecorderService.inputFactory = { _, _ -> FakeInput(audio) }
         start(now = true)
@@ -159,7 +160,6 @@ class RecorderServiceTest {
             Nights.save(oldDir, old.plusMinutes(30), ep),
         )
         Nights.appendMinute(oldDir, Minute(0, 0.0, 30.0, 0.0, 0.1))
-        Prefs(ctx).saveSounds = true
         RecorderService.inputFactory = { _, _ -> FakeInput(TestAudio.night()) }
         start(now = true)
         waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
@@ -208,7 +208,8 @@ class RecorderServiceTest {
         assertTrue(Nights.list(ctx).single().minutes.size >= 14)
     }
 
-    @Test fun onlyTheVoiceIsSavedByDefault() {
+    @Test fun withoutSamplesOnlyTheVoiceIsSaved() {
+        Prefs(ctx).soundSamples = false
         RecorderService.inputFactory = { _, _ -> FakeInput(TestAudio.night()) }
         start(now = true)
         waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
@@ -262,6 +263,96 @@ class RecorderServiceTest {
         start(now = true)
         waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
         assertTrue(Nights.list(ctx).flatMap { it.clips }.isEmpty(), Nights.list(ctx).toString())
+    }
+
+    @Test fun talkBeforeSleepIsNotKept() {
+        // Chatting in bed, then quiet: only what is said after a minute without talk is sleep talk.
+        Prefs(ctx).onsetMin = 1
+        val phrase = { TestAudio.mix(TestAudio.noise(2.0), TestAudio.speech(2.0)) }
+        val audio = TestAudio.cat(
+            TestAudio.noise(10.0), phrase(), TestAudio.noise(4.0), phrase(), TestAudio.noise(62.0),
+            phrase(), TestAudio.noise(6.0),
+        )
+        RecorderService.inputFactory = { _, _ -> FakeInput(audio) }
+        start(now = true)
+        waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
+        val night = Nights.list(ctx).single()
+        val clip = night.clips.single()
+        assertTrue(clip.at.isAfter(night.start.plusSeconds(70)), "the later phrase: ${night.clips}")
+        // A minute after the talk ended at 16 s, not a minute after the start.
+        val asleep = night.asleepAt ?: fail("the moment of falling asleep is kept")
+        assertTrue(java.time.Duration.between(asleep, clip.at).seconds in 0..10, "asleep $asleep, phrase ${clip.at}")
+        assertTrue(EventLog.lines(ctx).any { it.contains("Уснули") }, EventLog.lines(ctx).toString())
+    }
+
+    @Test fun talkJustBeforeTheQuietEndsKeepsThemAwake() {
+        // Quiet for almost a minute, then a long phrase that is still being said when the minute
+        // is up: they are awake, and what they say a little later is not sleep talk either.
+        Prefs(ctx).onsetMin = 1
+        val phrase = { s: Double -> TestAudio.mix(TestAudio.noise(s), TestAudio.speech(s)) }
+        val audio = TestAudio.cat(
+            TestAudio.noise(10.0), phrase(2.0), TestAudio.noise(4.0), phrase(2.0), TestAudio.noise(52.0),
+            phrase(6.0), TestAudio.noise(24.0), phrase(2.0), TestAudio.noise(6.0),
+        )
+        RecorderService.inputFactory = { _, _ -> FakeInput(audio) }
+        start(now = true)
+        waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
+        val night = Nights.list(ctx).single()
+        assertTrue(night.clips.isEmpty(), night.clips.toString())
+        assertEquals(null, night.asleepAt)
+    }
+
+    @Test fun snoringMeansAsleep() {
+        Prefs(ctx).onsetMin = 30
+        val phrase = TestAudio.mix(TestAudio.noise(2.0), TestAudio.speech(2.0))
+        val audio = TestAudio.cat(TestAudio.noise(10.0), TestAudio.snoring(70.0), TestAudio.noise(10.0), phrase, TestAudio.noise(6.0))
+        RecorderService.inputFactory = { _, _ -> FakeInput(audio) }
+        start(now = true)
+        waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
+        val kinds = Nights.list(ctx).single().clips.map { it.sound.kind }
+        assertTrue(SoundKind.SPEECH in kinds, "after snoring a phrase is sleep talk: $kinds")
+        assertEquals(1, kinds.count { it == SoundKind.SNORE }, "one sample of the snoring: $kinds")
+    }
+
+    @Test fun weAreAsleepStartsKeepingSpeech() {
+        Prefs(ctx).onsetMin = 30
+        // Talking on and on, no snoring: only the button can say they are asleep.
+        val talk = TestAudio.cat(TestAudio.noise(10.0), TestAudio.mix(TestAudio.noise(2.0), TestAudio.speech(2.0)), TestAudio.noise(8.0))
+        RecorderService.inputFactory = { _, _ -> FakeInput(talk, loop = true) }
+        val service = start(now = true)
+        val notes = { Nights.list(ctx).singleOrNull()?.let { java.io.File(it.dir, "clips.csv") }?.takeIf { it.exists() }?.readLines().orEmpty() }
+        waitFor("talk before sleep") { notes().count { "до сна" in it } >= 2 }
+        assertEquals(0, Recorder.state.value.clips)
+        assertTrue(Recorder.state.value.waitingForSleep)
+        service.withIntent(Intent(ctx, RecorderService::class.java).setAction(RecorderService.ACTION_ASLEEP)).startCommand(0, 2)
+        waitFor("a phrase kept") { Recorder.state.value.clips >= 1 }
+        waitFor("asleep") { !Recorder.state.value.waitingForSleep }
+        service.withIntent(Intent(ctx, RecorderService::class.java).setAction(RecorderService.ACTION_STOP)).startCommand(0, 3)
+        waitFor("stop") { Recorder.state.value.phase == Phase.IDLE }
+        assertTrue(EventLog.lines(ctx).any { "Уснули" in it && "Мы спим" in it }, EventLog.lines(ctx).toString())
+    }
+
+    @Test fun anUnclearVoiceIsKeptApart() {
+        // The network is only a little sure it heard a voice.
+        RecorderService.classifierFactory = {
+            SoundClassifier { _, _ -> Heard(listOf(mapOf("Speech" to 0.3f, "White noise" to 0.5f)), SoundClass(SoundKind.OTHER)) }
+        }
+        RecorderService.inputFactory = { _, _ -> FakeInput(TestAudio.night()) }
+        start(now = true)
+        waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
+        val night = Nights.list(ctx).single()
+        assertEquals(0, night.phrases)
+        assertTrue(night.unsure >= 1, night.clips.toString())
+    }
+
+    @Test fun hissIsNeverKept() {
+        RecorderService.classifierFactory = {
+            SoundClassifier { _, _ -> Heard(listOf(mapOf("White noise" to 0.7f, "Speech" to 0.08f)), SoundClass(SoundKind.OTHER)) }
+        }
+        RecorderService.inputFactory = { _, _ -> FakeInput(TestAudio.night()) }
+        start(now = true)
+        waitFor("session end") { Recorder.state.value.phase == Phase.IDLE }
+        assertTrue(Nights.list(ctx).flatMap { it.clips }.isEmpty())
     }
 
     @Test fun busyMicIsReported() {

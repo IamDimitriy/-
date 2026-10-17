@@ -19,8 +19,8 @@ object VoiceTrim {
     private const val SPEECH_RATIO = 0.45
 
     /**
-     * The voiced pieces of [audio]. Returns the whole clip as one piece when no voice stands out
-     * from the noise (better a long clip than a lost phrase).
+     * The voiced pieces of [audio]; none when no voice stands out from the noise. A clip of
+     * hiss used to be kept whole "to be safe", and nights filled up with white noise.
      */
     fun pieces(
         audio: FloatArray,
@@ -31,8 +31,7 @@ object VoiceTrim {
     ): List<Piece> {
         val frameLen = max(1, sampleRate * FRAME_MS / 1000)
         val n = audio.size / frameLen
-        val whole = listOf(Piece(0.0, audio))
-        if (n < 4) return whole
+        if (n < 4) return emptyList()
         val spectrum = Spectrum(frameLen, sampleRate)
         val db = DoubleArray(n)
         val ratio = DoubleArray(n)
@@ -53,7 +52,7 @@ object VoiceTrim {
         val voiced = listOf(6.0, 3.5).asSequence()
             .map { above -> BooleanArray(n) { db[it] >= floor + above && ratio[it] >= SPEECH_RATIO } }
             .firstOrNull { v -> v.count { it } * frameS >= MIN_VOICED_S }
-            ?: return whole
+            ?: return emptyList()
 
         // Runs of voiced frames, joined when the pause between them is short.
         val runs = ArrayList<IntArray>() // [first frame, last frame]

@@ -2,6 +2,7 @@ package sonnik.app
 
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -14,10 +15,18 @@ data class RecorderState(
     /** When saving starts (epoch ms). Before it the microphone is on but nothing is kept. */
     val saveFrom: Long = 0,
     val stopAt: Long = 0,
-    /** Phrases saved so far. */
+    /** Sure phrases saved so far. */
     val clips: Int = 0,
     /** Other saved sounds: snoring samples, creaks, the street. */
     val sounds: Int = 0,
+    /** Unclear bits that may be a voice, kept apart. */
+    val unsure: Int = 0,
+    /** Minutes of quiet that count as falling asleep (0: speech is kept from the start). */
+    val onsetMin: Int = 0,
+    /** When the sleepers fell asleep (epoch ms), 0 while they are still awake. */
+    val asleepAt: Long = 0,
+    /** Minutes without a phrase so far, while still awake. */
+    val quietMin: Int = 0,
     val lastClipAt: Long = 0,
     /** 0..1, how loud the room is relative to the trigger level. */
     val level: Float = 0f,
@@ -26,7 +35,10 @@ data class RecorderState(
     /** When the alarm will ring at the latest (epoch ms), or 0 when it is off. */
     val alarmAt: Long = 0,
     val alarmWindow: Int = 0,
-)
+) {
+    /** Recording, but the sleepers have not fallen asleep yet: speech is not kept. */
+    val waitingForSleep: Boolean get() = phase == Phase.RECORDING && onsetMin > 0 && asleepAt == 0L
+}
 
 /** Process-wide view of the recording service, observed by the UI. */
 object Recorder {
@@ -49,6 +61,13 @@ object Recorder {
 
     fun stop(ctx: Context) {
         ctx.startService(Intent(ctx, RecorderService::class.java).setAction(RecorderService.ACTION_STOP))
+    }
+
+    /** "We are asleep": keep speech from now on, without waiting for the quiet. */
+    fun asleep(ctx: Context) {
+        // The recording service runs in the foreground, so it may be reached from the background.
+        runCatching { ctx.startService(Intent(ctx, RecorderService::class.java).setAction(RecorderService.ACTION_ASLEEP)) }
+            .onFailure { Log.w("Sonnik", "Cannot reach the recorder", it) }
     }
 
     @Volatile private var awakeFrom = 0L
