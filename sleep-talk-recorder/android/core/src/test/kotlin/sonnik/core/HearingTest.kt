@@ -2,6 +2,7 @@ package sonnik.core
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -52,6 +53,18 @@ class HearingTest {
     @Test fun snoringByRhythmUnderAnyLabel() {
         val h = Heard(windows(mapOf("White noise" to 0.6f)), SoundClass(SoundKind.SNORE))
         assertEquals(SoundKind.SNORE, h.sound?.kind)
+    }
+
+    @Test fun snoringTheNetworkHearsMeansAsleep() {
+        assertTrue(Heard(windows(mapOf("Snoring" to 0.7f)), other).snoring)
+        assertTrue(Heard(windows(mapOf("White noise" to 0.6f)), SoundClass(SoundKind.SNORE)).snoring, "a rhythm in plain noise")
+        assertTrue(Heard(emptyList(), SoundClass(SoundKind.SNORE)).snoring, "rules alone")
+    }
+
+    @Test fun aLorryWithARhythmIsNotSleep() {
+        val h = Heard(windows(mapOf("Truck" to 0.6f, "Engine" to 0.4f)), SoundClass(SoundKind.SNORE))
+        assertEquals(SoundKind.SNORE, h.sound?.kind, "kept as a sample of what may be snoring")
+        assertFalse(h.snoring)
     }
 
     @Test fun withoutTheNetworkTheRulesDecide() {

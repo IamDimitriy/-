@@ -48,8 +48,8 @@ class SoundLabelsTest {
     @Test fun everyDetailHasATitle() {
         val labels = listOf("Whispering", "Shout", "Laughter", "Crying, sobbing", "Groan", "Humming", "Breathing", "Sneeze",
             "Hiccup", "Creak", "Rustle", "Walk, footsteps", "Door", "Knock", "Car", "Siren", "Motorcycle", "Train",
-            "Aircraft", "Dog", "Bird", "Rain", "Wind", "Thunder", "Chatter", "Cat", "Music", "Television", "Telephone",
-            "Clock", "Water", "Dishes, pots, and pans", "Mosquito", "Vehicle horn, car horn, honking")
+            "Aircraft", "Dog", "Bird", "Rain", "Wind", "Thunder", "Chatter", "Cat", "Song", "Television", "Telephone",
+            "Clock", "Water tap, faucet", "Dishes, pots, and pans", "Mosquito", "Vehicle horn, car horn, honking")
         for (l in labels) {
             val c = SoundLabels.classOf(l)!!
             assertTrue(c.detail != null && c.detailTitle != null, "$l -> $c")
@@ -144,5 +144,10 @@ class CombineTest {
     @Test fun steadyNoiseLabelsAreIgnored() {
         assertEquals(null, SoundLabels.classify(mapOf("White noise" to 0.9f, "Mechanical fan" to 0.5f, "Hum" to 0.3f)))
         assertEquals(null, SoundLabels.classOf("Air conditioning"))
+        // The network's names for plain hiss (measured on white noise): loud, and nearly silent.
+        assertEquals(null, SoundLabels.nonSpeech(mapOf("White noise" to 0.8f, "Waterfall" to 0.6f), minScore = 0.3f))
+        assertEquals(null, SoundLabels.nonSpeech(mapOf("Silence" to 0.4f, "Ping" to 0.33f), minScore = 0.3f))
+        // A fridge's hum: a tone the network takes for an instrument.
+        assertEquals(null, SoundLabels.nonSpeech(mapOf("Sine wave" to 0.7f, "Music" to 0.5f, "Gong" to 0.4f), minScore = 0.3f))
     }
 }

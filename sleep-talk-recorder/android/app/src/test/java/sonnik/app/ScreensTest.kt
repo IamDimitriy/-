@@ -208,7 +208,7 @@ class ScreensTest {
         Recorder.update { RecorderState(Phase.RECORDING, saveFrom = now, stopAt = now + 3_600_000, onsetMin = 20, quietMin = 7) }
         night()
         compose.onNodeWithText("Ждём, пока уснёте").assertIsDisplayed()
-        compose.onNodeWithText("после 20 минут тишины", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("после 20 мин тишины", substring = true).assertIsDisplayed()
         compose.onNodeWithText("Тишина уже 7 мин", substring = true).assertIsDisplayed()
         compose.onNodeWithText("Мы уже спим").assertIsDisplayed()
         compose.onNodeWithText("Остановить").assertIsDisplayed()

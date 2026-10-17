@@ -35,14 +35,24 @@ class Heard(val windows: List<Map<String, Float>>, val rules: SoundClass) {
         else -> null
     }
 
+    /** What the network itself names, other than a voice, if it is sure enough. */
+    private val model: SoundClass? by lazy {
+        if (windows.isEmpty()) null else SoundLabels.nonSpeech(best, minScore = SAMPLE_MIN)
+    }
+
     /**
      * What a sound that is not a voice is (snoring, a door, a car...), or null for silence and
      * steady noise: those are never kept. Without the network only the rules' snoring counts.
      */
-    val sound: SoundClass? get() {
-        val model = if (windows.isEmpty()) null else SoundLabels.nonSpeech(best, minScore = SAMPLE_MIN)
-        return combine(model, rules)?.takeIf { it.kind != SoundKind.SPEECH && it.kind != SoundKind.UNSURE }
-    }
+    val sound: SoundClass? get() =
+        combine(model, rules)?.takeIf { it.kind != SoundKind.SPEECH && it.kind != SoundKind.UNSURE }
+
+    /**
+     * Snoring sure enough to say the sleepers are asleep: the network names snoring or breathing,
+     * or names nothing and the rules hear the rhythm. A lorry passing has a rhythmic low rumble
+     * too, and a sample of it may be kept as snoring, but it must not end the evening's talk.
+     */
+    val snoring: Boolean get() = sound?.kind == SoundKind.SNORE && model.let { it == null || it.kind == SoundKind.SNORE }
 
     /** Each label's best score over the windows. */
     val best: Map<String, Float> by lazy {

@@ -373,7 +373,7 @@ private fun StatusCard(
                         Text("Ждём, пока уснёте", style = MaterialTheme.typography.headlineSmall)
                     }
                     Text(
-                        "Разговоры до сна не сохраняются. Запись речи начнётся после ${state.onsetMin} минут " +
+                        "Разговоры до сна не сохраняются. Запись речи начнётся после ${state.onsetMin} мин " +
                             "тишины или как только послышится храп. Тишина уже ${state.quietMin} мин.",
                         color = Palette.muted,
                     )

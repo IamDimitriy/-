@@ -100,7 +100,7 @@ object Nights {
         val f = File(nightDir, NOTES)
         if (!f.exists()) f.writeText("time,outcome,speech,heard\n")
         val speech = String.format(java.util.Locale.ROOT, "%.2f", heard.speech)
-        f.appendText("${at.format(noteFmt)},$outcome,$speech,\"${heard.top().replace('"', '\'')}\"\n")
+        f.appendText("${at.format(noteFmt)},$outcome,$speech,\"${heard.top(5).replace('"', '\'')}\"\n")
     }
 
     fun setAsleep(nightDir: File, at: LocalDateTime) = File(nightDir, ASLEEP).writeText(at.withNano(0).toString())

@@ -224,8 +224,6 @@ class RecorderService : Service() {
             runCatching { Nights.appendMinute(dir, m) }.onFailure { Log.w(TAG, "Activity write failed", it) }
             val snore = NightSummary.of(minutes).snoreMinutes
             Recorder.update { it.copy(snoreMinutes = snore) }
-            // Snoring for a good part of the minute: asleep, whatever was said before.
-            if (m.snoreS >= SNORE_ASLEEP_S) gate?.heardSnoring(LocalDateTime.ofInstant(Instant.ofEpochMilli(audioNow()), zone))
             val w = wake
             if (w != null && rangAt != w.at) {
                 val now = LocalDateTime.ofInstant(Instant.ofEpochMilli(audioNow()), zone)
@@ -286,7 +284,8 @@ class RecorderService : Service() {
                             Nights.note(dir, start, Nights.NOISE, heard)
                             return@runCatching
                         }
-                        if (sound.kind == SoundKind.SNORE) g?.heardSnoring(start)
+                        // Snoring: asleep, whatever was said before.
+                        if (heard.snoring) g?.heardSnoring(start)
                         val outcome = when {
                             g != null && !g.asleep(start) -> "до сна"
                             !takeSamples -> "образцы выключены"
@@ -430,8 +429,6 @@ class RecorderService : Service() {
         private const val SENSITIVITY_DB = 4.0
         /** How often a running session re-reads the wake-up time and the end of the night. */
         private const val SETTINGS_EVERY_MS = 5_000L
-        /** Seconds of snoring in a minute that mean the sleepers are asleep. */
-        private const val SNORE_ASLEEP_S = 10.0
         /** The sound's clock may fall this far behind the wall clock before it is moved on. */
         private const val CLOCK_SLIP_MS = 1_000L
 

@@ -49,6 +49,10 @@ object SoundLabels {
         "Environmental noise", "White noise", "Pink noise", "Static", "Field recording", "Reverberation", "Echo",
         "Sound effect", "Distortion", "Sidetone", "Outside, rural or natural", "Hubbub, speech noise, speech babble",
         "Mechanical fan", "Air conditioning", "Whir", "Hum", "Mains hum", "Buzz", "Rumble", "Hiss", "Static noise",
+        // What the network calls steady hiss: "a waterfall" when loud, "a ping" when nearly silent.
+        "Waterfall", "Water", "Stream", "Ocean", "Waves, surf", "Steam", "Spray", "Ping",
+        // And the hum of a fridge or a charger: a tone, "a tuning fork", "a gong", "music".
+        "Sine wave", "Chirp tone", "Tuning fork", "Singing bowl", "Gong", "Bell", "Musical instrument", "Music",
     )
 
     init {
@@ -75,8 +79,9 @@ object SoundLabels {
             "Zipper (clothing)", "Shuffle", "Tearing")
         add(SoundKind.MOVEMENT, "steps", "шаги", "Walk, footsteps", "Run")
         add(SoundKind.MOVEMENT, "door", "дверь", "Door", "Sliding door", "Slam", "Cupboard open or close", "Drawer open or close")
+        // In a bedroom at night a "drum" is a knock on the wall or the headboard.
         add(SoundKind.MOVEMENT, "knock", "стук", "Knock", "Tap", "Thump, thud", "Thunk", "Bang", "Wood", "Clatter",
-            "Bouncing", "Whack, thwack", "Slap, smack")
+            "Bouncing", "Whack, thwack", "Slap, smack", "Clicking", "Wood block", "Percussion", "Drum", "Drum machine")
 
         add(SoundKind.STREET, "car", "машина", "Vehicle", "Motor vehicle (road)", "Car", "Car passing by", "Truck", "Bus",
             "Traffic noise, roadway noise", "Engine", "Idling", "Accelerating, revving, vroom", "Tire squeal", "Skidding",
@@ -100,12 +105,12 @@ object SoundLabels {
         add(SoundKind.STREET, "voices", "голоса", "Chatter", "Crowd", "Children playing", "Cheering")
 
         add(SoundKind.OTHER, "cat", "кошка", "Cat", "Purr", "Meow", "Hiss", "Caterwaul")
-        add(SoundKind.OTHER, "music", "музыка", "Music", "Song", "Background music", "Pop music", "Radio")
+        add(SoundKind.OTHER, "music", "музыка", "Song", "Background music", "Pop music", "Radio")
         add(SoundKind.OTHER, "tv", "телевизор", "Television")
         add(SoundKind.OTHER, "phone", "телефон", "Telephone", "Telephone bell ringing", "Ringtone", "Alarm", "Alarm clock",
-            "Beep, bleep", "Ping", "Ding", "Buzzer")
+            "Beep, bleep", "Ding", "Buzzer")
         add(SoundKind.OTHER, "clock", "часы", "Clock", "Tick", "Tick-tock")
-        add(SoundKind.OTHER, "water", "вода", "Water", "Water tap, faucet", "Sink (filling or washing)", "Toilet flush",
+        add(SoundKind.OTHER, "water", "вода", "Water tap, faucet", "Sink (filling or washing)", "Toilet flush",
             "Drip", "Pour", "Trickle, dribble", "Liquid", "Splash, splatter", "Bathtub (filling or washing)")
         add(SoundKind.OTHER, "dishes", "посуда", "Dishes, pots, and pans", "Cutlery, silverware", "Chink, clink", "Glass")
         add(SoundKind.OTHER, "insect", "насекомое", "Mosquito", "Fly, housefly", "Insect", "Bee, wasp, etc.", "Cricket")
