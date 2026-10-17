@@ -6,7 +6,6 @@ import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
@@ -238,8 +237,7 @@ internal class Spectrum(private val frameLen: Int, private val sampleRate: Int) 
     private val re = DoubleArray(n)
     private val im = DoubleArray(n)
     private val power = DoubleArray(n / 2 + 1)
-    private val cosT = DoubleArray(n / 2) { cos(2 * PI * it / n) }
-    private val sinT = DoubleArray(n / 2) { -sin(2 * PI * it / n) }
+    private val fft = Fft(n)
     private val hzPerBin = sampleRate.toDouble() / n
 
     fun analyse(frame: FloatArray) {
@@ -247,7 +245,7 @@ internal class Spectrum(private val frameLen: Int, private val sampleRate: Int) 
             re[i] = if (i < frameLen) frame[i] * window[i] else 0.0
             im[i] = 0.0
         }
-        fft()
+        fft.transform(re, im)
         for (k in power.indices) power[k] = re[k] * re[k] + im[k] * im[k]
     }
 
@@ -259,33 +257,5 @@ internal class Spectrum(private val frameLen: Int, private val sampleRate: Int) 
             if (f > fromHz && f <= toHz) e += power[k]
         }
         return e
-    }
-
-    private fun fft() {
-        var j = 0
-        for (i in 1 until n) {
-            var bit = n shr 1
-            while (j and bit != 0) { j = j xor bit; bit = bit shr 1 }
-            j = j xor bit
-            if (i < j) {
-                val tr = re[i]; re[i] = re[j]; re[j] = tr
-                val ti = im[i]; im[i] = im[j]; im[j] = ti
-            }
-        }
-        var len = 2
-        while (len <= n) {
-            val step = n / len
-            for (start in 0 until n step len) {
-                for (k in 0 until len / 2) {
-                    val c = cosT[k * step]; val s = sinT[k * step]
-                    val a = start + k; val b = a + len / 2
-                    val xr = re[b] * c - im[b] * s
-                    val xi = re[b] * s + im[b] * c
-                    re[b] = re[a] - xr; im[b] = im[a] - xi
-                    re[a] += xr; im[a] += xi
-                }
-            }
-            len = len shl 1
-        }
     }
 }

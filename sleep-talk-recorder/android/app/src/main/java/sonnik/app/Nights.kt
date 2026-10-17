@@ -20,6 +20,8 @@ data class Clip(
     val at: LocalDateTime,
     val durationS: Double,
     val sound: SoundClass = SoundClass(SoundKind.SPEECH),
+    /** Starred to come back to. */
+    val favorite: Boolean = false,
 )
 
 data class Night(
@@ -90,6 +92,30 @@ object Nights {
     private const val ACTIVITY = "activity.csv"
     private const val NOTES = "clips.csv"
     private const val ASLEEP = "asleep.txt"
+    /** The night's starred clips, one file name a line. */
+    private const val FAVORITES = "favorites.txt"
+
+    private fun favorites(nightDir: File): Set<String> =
+        File(nightDir, FAVORITES).takeIf { it.exists() }?.readLines()?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()
+            ?: emptySet()
+
+    private fun writeFavorites(nightDir: File, names: Set<String>) {
+        val f = File(nightDir, FAVORITES)
+        if (names.isEmpty()) {
+            f.delete()
+            return
+        }
+        val tmp = File(nightDir, "$FAVORITES.part")
+        tmp.writeText(names.sorted().joinToString("\n", postfix = "\n"))
+        tmp.renameTo(f)
+    }
+
+    /** Stars [clip] to come back to, or takes the star away. */
+    fun setFavorite(clip: Clip, on: Boolean) {
+        val dir = clip.file.parentFile ?: return
+        val names = favorites(dir)
+        writeFavorites(dir, if (on) names + clip.file.name else names - clip.file.name)
+    }
     private val noteFmt = DateTimeFormatter.ofPattern("HH:mm:ss")
 
     /**
@@ -154,8 +180,10 @@ object Nights {
     fun list(ctx: Context): List<Night> =
         root(ctx).listFiles { f -> f.isDirectory }.orEmpty().mapNotNull { dir ->
             val start = runCatching { LocalDateTime.parse(dir.name, dirFmt) }.getOrNull() ?: return@mapNotNull null
+            val starred = favorites(dir)
             val clips = dir.listFiles { f -> f.name.endsWith(".wav") }.orEmpty()
                 .mapNotNull(::parseClip)
+                .map { if (it.file.name in starred) it.copy(favorite = true) else it }
                 .sortedBy { it.at }
             Night(dir, start, clips, minutes(dir), asleepAt(dir))
         }.sortedByDescending { it.start }
@@ -167,7 +195,13 @@ object Nights {
     fun shown(nights: List<Night>, recording: Boolean): List<Night> =
         nights.filterIndexed { i, n -> n.clips.isNotEmpty() || n.minutes.size >= 5 || (recording && i == 0) }
 
-    fun delete(clip: Clip) = clip.file.delete()
+    fun delete(clip: Clip): Boolean {
+        clip.file.parentFile?.let { dir ->
+            val names = favorites(dir)
+            if (clip.file.name in names) writeFavorites(dir, names - clip.file.name)
+        }
+        return clip.file.delete()
+    }
 
     fun delete(night: Night) = night.dir.deleteRecursively()
 }

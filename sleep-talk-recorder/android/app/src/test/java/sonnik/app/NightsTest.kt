@@ -161,6 +161,28 @@ class NightsTest {
         assertTrue("03:00:00,шум" !in report, report)
     }
 
+    @Test fun starredClipsStayStarred() {
+        val dir = Nights.dirFor(ctx, at("2026-10-09T00:00"))
+        Nights.save(dir, at("2026-10-09T01:00:00"), ep(1.0))
+        Nights.save(dir, at("2026-10-09T02:00:00"), ep(1.0))
+        File(dir, "favorites.txt").writeText("gone.wav\n") // a clip deleted some other way
+        val first = Nights.list(ctx).single().clips.first()
+        Nights.setFavorite(first, true)
+        assertEquals(listOf(true, false), Nights.list(ctx).single().clips.map { it.favorite })
+        Nights.setFavorite(Nights.list(ctx).single().clips.first(), false)
+        assertEquals(listOf(false, false), Nights.list(ctx).single().clips.map { it.favorite })
+    }
+
+    @Test fun aDeletedClipLeavesTheStarredList() {
+        val dir = Nights.dirFor(ctx, at("2026-10-09T00:00"))
+        Nights.save(dir, at("2026-10-09T01:00:00"), ep(1.0))
+        Nights.save(dir, at("2026-10-09T02:00:00"), ep(1.0))
+        Nights.list(ctx).single().clips.forEach { Nights.setFavorite(it, true) }
+        Nights.delete(Nights.list(ctx).single().clips.first())
+        assertEquals(listOf("2026-10-09_02-00-00__speech.wav"), File(dir, "favorites.txt").readLines())
+        assertEquals(listOf(true), Nights.list(ctx).single().clips.map { it.favorite })
+    }
+
     @Test fun deletingAClipAndANight() {
         val dir = Nights.dirFor(ctx, at("2026-10-09T00:00"))
         Nights.save(dir, at("2026-10-09T01:00:00"), ep(1.0))

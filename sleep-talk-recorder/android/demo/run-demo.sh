@@ -3,6 +3,7 @@
 #  0. The first launch, before anything is allowed: walks the "Чтобы всё работало само" card.
 #  1. Records a prepared "night" (demo/night.wav played instead of the mic): a phrase said before
 #     falling asleep (not kept), snoring (they are asleep now, one sample kept), two phrases in sleep.
+#     Then plays them louder, stars one, and plays the night from the morning notification.
 #  2. Checks the automatic start: schedules the night two minutes ahead, turns the screen off
 #     and waits for the app to switch the microphone on by itself.
 #  3. The alarm over the lock screen.  4. A dream written down after waking.
@@ -146,6 +147,24 @@ tap_on "Слушать подряд" contains || tap_on "Слушать"
 sleep 2
 shot 08-playing
 sleep 6
+# Voices are played from louder, cleaner copies in the cache; the recordings stay as they are.
+CLEAR=$(adb shell "run-as $PKG sh -c 'ls cache/clear'" 2>/dev/null | grep -c '\.wav')
+log "louder copies made for listening: $CLEAR"
+tap_on "В избранное"
+sleep 3
+shot 08b-favorite
+STARRED=$(adb shell "run-as $PKG sh -c 'cat files/nights/*/favorites.txt'" 2>/dev/null | grep '\.wav' | head -1)
+log "starred: ${STARRED:-nothing}"
+# The morning notification's own button plays the night's phrases straight away.
+adb shell cmd statusbar expand-notifications
+sleep 3
+MORNING_PLAY=""
+if tap_on "Слушать подряд"; then
+  sleep 1
+  on_screen "Остановить" && MORNING_PLAY=yes
+  shot 08c-morning-play-all
+fi
+log "«Слушать подряд» from the morning notification: ${MORNING_PLAY:-did not play}"
 wait $REC
 adb pull /sdcard/demo.mp4 "$OUT/demo.mp4" >> "$LOG" 2>&1
 adb shell run-as $PKG ls -lR files/nights >> "$LOG" 2>&1
@@ -323,6 +342,9 @@ FAILED=0
 [ "$BEFORE_SLEEP" -ge 1 ] || { log "FAIL: the phrase before sleep was not recognised as talk before sleep"; FAILED=1; }
 [ "$SNORES" -ge 1 ] || { log "FAIL: no sample of the snoring was kept"; FAILED=1; }
 [ -n "$ASLEEP" ] || { log "FAIL: falling asleep was not noted"; FAILED=1; }
+[ "$CLEAR" -ge 1 ] 2>/dev/null || { log "FAIL: no louder copy was made for listening"; FAILED=1; }
+[ -n "$STARRED" ] || { log "FAIL: the star did not stick"; FAILED=1; }
+[ -n "$MORNING_PLAY" ] || { log "FAIL: «Слушать подряд» in the morning notification did not play the night"; FAILED=1; }
 [ -n "$STARTED" ] || { log "FAIL: recording did not start by itself"; FAILED=1; }
 [ -n "$RANG" ] || { log "FAIL: the alarm did not ring"; FAILED=1; }
 [ -n "$DREAM_SAVED" ] || { log "FAIL: the dream was not saved"; FAILED=1; }

@@ -3,6 +3,7 @@ package sonnik.app
 import android.Manifest
 import android.app.Application
 import android.content.Context
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -201,6 +202,35 @@ class ScreensTest {
         compose.onNodeWithText("01:20:00").assertDoesNotExist()
         compose.onNodeWithText("Неразборчиво · 1").performScrollTo().performClick()
         compose.onNodeWithText("01:20:00").assertExists()
+    }
+
+    @Test fun starringAClipAndShowingOnlyTheStarred() {
+        val dir = Nights.dirFor(ctx, LocalDateTime.parse("2026-10-09T00:00"))
+        val ep = Episode(0.0, 16000, FloatArray(16000 * 3), -20.0, 3.0)
+        Nights.save(dir, LocalDateTime.parse("2026-10-09T01:00:00"), ep)
+        Nights.save(dir, LocalDateTime.parse("2026-10-09T02:00:00"), ep)
+        records()
+        waitForText("Ночь на 9 октября")
+        compose.onNodeWithText("Избранное", substring = true).assertDoesNotExist()
+        compose.onAllNodesWithContentDescription("В избранное")[1].performClick()
+        waitForText("Избранное 1")
+        compose.onNodeWithText("Избранное 1").performClick()
+        compose.onNodeWithText("02:00:00").assertExists()
+        compose.onNodeWithText("01:00:00").assertDoesNotExist()
+        // The last star taken away: everything is shown again.
+        compose.onNodeWithContentDescription("Убрать из избранного").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Избранное 1").fetchSemanticsNodes().isEmpty() }
+        compose.onNodeWithText("01:00:00").assertExists()
+        assertTrue(Nights.list(ctx).single().clips.none { it.favorite })
+    }
+
+    @Test fun theMorningButtonPlaysTheNight() {
+        // Robolectric has no sound: what is checked is that the request is taken up once the night is read.
+        val dir = Nights.dirFor(ctx, LocalDateTime.parse("2026-10-09T00:00"))
+        Nights.save(dir, LocalDateTime.parse("2026-10-09T01:00:00"), Episode(0.0, 16000, FloatArray(16000), -20.0, 1.0))
+        val request = mutableStateOf(true)
+        compose.setContent { SonnikTheme { RecordsScreen(request) } }
+        compose.waitUntil(5_000) { !request.value }
     }
 
     @Test fun beforeSleepTheScreenWaitsForIt() {

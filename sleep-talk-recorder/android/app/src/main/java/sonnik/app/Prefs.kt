@@ -61,6 +61,11 @@ class Prefs(context: Context) {
         get() = sp.getInt("onsetMin", 20)
         set(v) = sp.edit().putInt("onsetMin", v).apply()
 
+    /** Voices are played louder, with the room's hiss turned down (see Cleaned); on by default. */
+    var playLouder: Boolean
+        get() = sp.getBoolean("playLouder", true)
+        set(v) = sp.edit().putBoolean("playLouder", v).apply()
+
     /** When the last recording session started (manual or automatic), or null. */
     var lastSessionAt: LocalDateTime?
         get() = sp.getString("lastSession", null)?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }

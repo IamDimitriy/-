@@ -14,6 +14,7 @@ import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -27,11 +28,13 @@ const val TAB_DREAMS = 2
 /** A dream open in the editor; [listen] starts dictation right away (after the alarm). */
 data class DreamEdit(val dream: Dream, val listen: Boolean)
 
+/** [playAll]: the morning notification asked to play the night's phrases (see RecordsScreen). */
 @Composable
 fun App(
     tab: MutableIntState,
     editing: MutableState<DreamEdit?>,
     dictation: Dictation? = null,
+    playAll: MutableState<Boolean> = remember { mutableStateOf(false) },
 ) {
     val ctx = LocalContext.current
     val dict = dictation ?: remember { SpeechDictation(ctx) }
@@ -84,7 +87,7 @@ fun App(
     ) { padding ->
         Box(Modifier.padding(padding)) {
             when (tab.intValue) {
-                TAB_RECORDS -> RecordsScreen()
+                TAB_RECORDS -> RecordsScreen(playAll)
                 TAB_DREAMS -> DreamsScreen(onOpen = { d -> editing.value = DreamEdit(d ?: DreamStore.new(), listen = false) })
                 else -> NightScreen(onOpenRecords = { tab.intValue = TAB_RECORDS })
             }

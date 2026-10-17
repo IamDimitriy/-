@@ -213,11 +213,26 @@ object Notifications {
     fun morning(ctx: Context, clips: Int, sounds: Int = 0, snoreMinutes: Int = 0, asleepAt: Long = 0) {
         val snore = (if (sounds > 0) " · ${soundsText(sounds)}" else "") +
             (if (snoreMinutes > 0) " · храп ${minutesText(snoreMinutes)}" else "")
-        val n = NotificationCompat.Builder(ctx, CH_INFO)
+        val b = NotificationCompat.Builder(ctx, CH_INFO)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("За ночь: ${phrases(clips)}$snore")
             .setContentText((if (asleepAt > 0) "Уснули ≈ ${time(asleepAt)} · " else "") + "Нажмите, чтобы послушать")
             .setContentIntent(openApp(ctx, records = true))
+        if (clips > 0) {
+            // The night's phrases one after another, without looking for them.
+            b.addAction(
+                0, "Слушать подряд",
+                PendingIntent.getActivity(
+                    ctx, 13,
+                    Intent(ctx, MainActivity::class.java)
+                        .putExtra(MainActivity.EXTRA_RECORDS, true)
+                        .putExtra(MainActivity.EXTRA_PLAY_ALL, true)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                ),
+            )
+        }
+        val n = b
             .addAction(
                 0, "Записать сон",
                 PendingIntent.getActivity(

@@ -83,6 +83,8 @@ class RecorderServiceTest {
         assertTrue(input.closed)
         assertTrue(shadowOf(service.get()).isStoppedBySelf)
         assertTrue(titles().any { it.startsWith("За ночь: 2 фразы · 1 звук") }, titles().toString())
+        val morning = shadowOf(nm).allNotifications.first { it.extras.getCharSequence("android.title").toString().startsWith("За ночь") }
+        assertEquals(listOf("Слушать подряд", "Записать сон"), morning.actions.map { it.title.toString() })
     }
 
     @Test fun showsLiveProgressWhileRecording() {

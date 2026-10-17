@@ -14,6 +14,8 @@ class MainActivity : ComponentActivity() {
     /** TAB_NIGHT, TAB_RECORDS or TAB_DREAMS. Changed by the morning notification. */
     private val tab = mutableIntStateOf(0)
     private val editing = mutableStateOf<DreamEdit?>(null)
+    /** "Слушать подряд" from the morning notification: the records play the night's phrases. */
+    private val playAll = mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // The app is always dark, so system bar icons stay light whatever the phone's theme.
@@ -24,7 +26,7 @@ class MainActivity : ComponentActivity() {
         // A rebuilt activity (text or display size, the dark theme switching at sunrise, the phone
         // freeing memory) gets its first intent again: handling it twice would open an empty dream.
         if (savedInstanceState == null) handle(intent) else restore(savedInstanceState)
-        setContent { SonnikTheme { App(tab, editing) } }
+        setContent { SonnikTheme { App(tab, editing, playAll = playAll) } }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -50,6 +52,10 @@ class MainActivity : ComponentActivity() {
         if (intent.hasExtra(EXTRA_RECORDS)) {
             tab.intValue = if (intent.getBooleanExtra(EXTRA_RECORDS, false)) TAB_RECORDS else TAB_NIGHT
         }
+        if (intent.getBooleanExtra(EXTRA_PLAY_ALL, false)) {
+            playAll.value = true
+            intent.removeExtra(EXTRA_PLAY_ALL)
+        }
         if (intent.getBooleanExtra(EXTRA_NEW_DREAM, false)) {
             // Straight after waking: open a new dream and start listening.
             val text = if (BuildConfig.DEBUG) intent.getStringExtra("demo_dream_text").orEmpty() else ""
@@ -62,6 +68,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_RECORDS = "records"
         const val EXTRA_NEW_DREAM = "new_dream"
+        const val EXTRA_PLAY_ALL = "play_all"
         private const val STATE_TAB = "tab"
         private const val STATE_DREAM = "dream"
     }

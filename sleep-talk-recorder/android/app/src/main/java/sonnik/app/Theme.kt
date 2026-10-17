@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
@@ -100,6 +101,19 @@ object Glyphs {
         path(fill = SolidColor(Color.White)) {
             moveTo(8f, 5f); lineTo(19f, 12f); lineTo(8f, 19f); close()
         }
+    }
+
+    val Star = icon("star") {
+        path(fill = SolidColor(Color.White)) { star() }
+    }
+
+    val StarOutline = icon("star-outline") {
+        path(stroke = SolidColor(Color.White), strokeLineWidth = 1.8f, strokeLineJoin = StrokeJoin.Round) { star() }
+    }
+
+    private fun androidx.compose.ui.graphics.vector.PathBuilder.star() {
+        moveTo(12f, 3f); lineTo(14.6f, 8.6f); lineTo(20.6f, 9.3f); lineTo(16.1f, 13.4f); lineTo(17.4f, 19.4f)
+        lineTo(12f, 16.4f); lineTo(6.6f, 19.4f); lineTo(7.9f, 13.4f); lineTo(3.4f, 9.3f); lineTo(9.4f, 8.6f); close()
     }
 
     val Pause = icon("pause") {

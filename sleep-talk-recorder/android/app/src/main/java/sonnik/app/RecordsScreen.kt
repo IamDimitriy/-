@@ -3,6 +3,9 @@ package sonnik.app
 import android.content.Context
 import android.content.Intent
 import android.media.MediaPlayer
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -12,6 +15,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import java.time.Duration
 import kotlin.math.max
 import kotlin.math.sqrt
@@ -54,6 +58,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -75,6 +80,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.Executors
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
@@ -83,8 +89,11 @@ private val dayFmt = DateTimeFormatter.ofPattern("d MMMM", ru)
 private val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
 private val secFmt = DateTimeFormatter.ofPattern("HH:mm:ss")
 
-/** One clip plays at a time, at the chosen speed, and can be wound to any point. */
-private class ClipPlayer {
+/**
+ * One clip plays at a time, at the chosen speed, and can be wound to any point. Voices play
+ * louder and cleaner while [louder] is on: a copy made off the main thread (see [Cleaned]).
+ */
+private class ClipPlayer(private val ctx: Context) {
     var current by mutableStateOf<File?>(null)
         private set
     var progress by mutableFloatStateOf(0f)
@@ -96,36 +105,82 @@ private class ClipPlayer {
     /** Kept for the next clips too: listening through a night goes faster. */
     var speed by mutableFloatStateOf(1f)
         private set
+    /** Voices louder, the room's hiss turned down; remembered between visits. */
+    var louder by mutableStateOf(Prefs(ctx).playLouder)
+        private set
     private var mp: MediaPlayer? = null
+    private var playing: Clip? = null
 
     /** The clips still to play after the current one ("listen in a row"). */
-    private var queue: List<File> = emptyList()
+    private var queue: List<Clip> = emptyList()
     /** The night being played through in a row, if any. */
     var playingAll by mutableStateOf<File?>(null)
         private set
 
-    fun toggle(f: File) {
-        val same = current == f
+    private val main = Handler(Looper.getMainLooper())
+    /** Makes the louder copies, one at a time, in the order asked. */
+    private val prep = Executors.newSingleThreadExecutor()
+    /** Counts the starts and stops: a copy that took a moment does not start over a newer choice. */
+    private var turn = 0
+
+    /** Louder applies to voices; snoring and knocks are played as they are. */
+    fun cleans(clip: Clip) = clip.sound.kind == SoundKind.SPEECH || clip.sound.kind == SoundKind.UNSURE
+
+    fun toggle(clip: Clip) {
+        val same = current == clip.file
         stop()
         if (same) return
-        play(f)
+        play(clip)
     }
 
-    /** Plays [files] one after the other; [night] marks which night's button shows "stop". */
-    fun playAll(night: File, files: List<File>) {
+    /** Plays [clips] one after the other; [night] marks which night's button shows "stop". */
+    fun playAll(night: File, clips: List<Clip>) {
         stop()
-        if (files.isEmpty()) return
-        queue = files.drop(1)
+        if (clips.isEmpty()) return
+        queue = clips.drop(1)
         playingAll = night
-        play(files.first())
+        play(clips.first())
+        // The next ones are made ready while the first one plays.
+        if (louder) for (c in queue) if (cleans(c)) prep.execute { runCatching { Cleaned.file(ctx, c.file) } }
     }
 
-    private fun play(f: File) {
+    /** Switches between the louder copy and the recording itself, carrying on from the same moment. */
+    fun toggleLouder() {
+        louder = !louder
+        Prefs(ctx).playLouder = louder
+        val clip = playing ?: return
+        val at = mp?.let { runCatching { it.currentPosition }.getOrNull() } ?: positionMs
+        mp?.release()
+        mp = null
+        play(clip, at)
+    }
+
+    private fun play(clip: Clip, fromMs: Int = 0) {
+        val my = ++turn
+        playing = clip
+        current = clip.file
+        progress = 0f
+        positionMs = fromMs
+        durationMs = 0
+        if (!louder || !cleans(clip)) {
+            start(clip.file, fromMs)
+            return
+        }
+        prep.execute {
+            val f = runCatching { Cleaned.file(ctx, clip.file) }
+                .onFailure { Log.w("Sonnik", "Louder copy failed, playing the recording", it) }
+                .getOrDefault(clip.file)
+            main.post { if (turn == my) start(f, fromMs) }
+        }
+    }
+
+    private fun start(source: File, fromMs: Int) {
         val p = MediaPlayer()
         val ok = runCatching {
-            p.setDataSource(f.path)
+            p.setDataSource(source.path)
             p.setOnCompletionListener { next() }
             p.prepare()
+            if (fromMs > 0) p.seekTo(fromMs)
             p.start()
         }.isSuccess
         if (!ok) {
@@ -135,9 +190,6 @@ private class ClipPlayer {
         }
         if (speed != 1f) runCatching { p.playbackParams = p.playbackParams.setSpeed(speed) }
         mp = p
-        current = f
-        progress = 0f
-        positionMs = 0
         durationMs = p.duration.coerceAtLeast(0)
     }
 
@@ -180,14 +232,22 @@ private class ClipPlayer {
     }
 
     fun stop() {
+        turn++
         mp?.release()
         mp = null
+        playing = null
         queue = emptyList()
         playingAll = null
         current = null
         progress = 0f
         positionMs = 0
         durationMs = 0
+    }
+
+    /** The screen is gone for good. */
+    fun close() {
+        stop()
+        prep.shutdown()
     }
 }
 
@@ -208,16 +268,22 @@ private sealed interface PendingDelete {
     data class WholeNight(val night: Night) : PendingDelete
 }
 
+/**
+ * The nights and their clips. [playAll] set (by "Слушать подряд" in the morning notification)
+ * plays the latest night's phrases one after another as soon as the list is read.
+ */
 @Composable
-fun RecordsScreen() {
+fun RecordsScreen(playAll: MutableState<Boolean> = remember { mutableStateOf(false) }) {
     val ctx = LocalContext.current
     val rec by Recorder.state.collectAsStateWithLifecycle()
     var nights by remember { mutableStateOf<List<Night>?>(null) }
     var version by remember { mutableStateOf(0) }
-    val player = remember { ClipPlayer() }
+    val player = remember { ClipPlayer(ctx.applicationContext) }
     var pending by remember { mutableStateOf<PendingDelete?>(null) }
     /** Show only one kind of sound, or everything when null. */
     var filter by remember { mutableStateOf<SoundKind?>(null) }
+    /** Show only the starred clips. */
+    var favoritesOnly by remember { mutableStateOf(false) }
 
     LaunchedEffect(version, rec.clips, rec.sounds, rec.phase) {
         nights = withContext(Dispatchers.IO) { Nights.list(ctx) }
@@ -229,15 +295,27 @@ fun RecordsScreen() {
     LaunchedEffect(player.current) {
         while (player.current != null) { player.tick(); delay(100) }
     }
-    DisposableEffect(Unit) { onDispose { player.stop() } }
+    DisposableEffect(Unit) { onDispose { player.close() } }
 
     val recording = rec.phase == Phase.RECORDING
     val all = nights?.let { Nights.shown(it, recording) }
+    LaunchedEffect(all, playAll.value) {
+        if (!playAll.value || all == null) return@LaunchedEffect
+        playAll.value = false
+        val night = all.firstOrNull { it.phrases > 0 } ?: return@LaunchedEffect
+        player.playAll(night.dir, night.clips.filter { it.sound.kind == SoundKind.SPEECH })
+    }
     /** The night being recorded now is the newest one. */
     val liveDir = if (recording) all?.firstOrNull()?.dir else null
+    val starred = all?.sumOf { n -> n.clips.count { it.favorite } } ?: 0
+    // The last star taken away: back to everything.
+    val onlyStarred = favoritesOnly && starred > 0
     val list = all?.let { ns ->
-        if (filter == null) ns
-        else ns.map { n -> n.copy(clips = n.clips.filter { it.sound.kind == filter }) }.filter { it.clips.isNotEmpty() }
+        when {
+            onlyStarred -> ns.map { n -> n.copy(clips = n.clips.filter { it.favorite }) }.filter { it.clips.isNotEmpty() }
+            filter == null -> ns
+            else -> ns.map { n -> n.copy(clips = n.clips.filter { it.sound.kind == filter }) }.filter { it.clips.isNotEmpty() }
+        }
     }
     LazyColumn(
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
@@ -262,12 +340,24 @@ fun RecordsScreen() {
                 Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                FilterChip(selected = filter == null, onClick = { filter = null }, label = { Text("Все") })
+                FilterChip(
+                    selected = filter == null && !onlyStarred,
+                    onClick = { filter = null; favoritesOnly = false },
+                    label = { Text("Все") },
+                )
+                if (starred > 0) {
+                    FilterChip(
+                        selected = onlyStarred,
+                        onClick = { favoritesOnly = !onlyStarred; filter = null },
+                        label = { Text("Избранное $starred") },
+                        leadingIcon = { Icon(Glyphs.Star, null, Modifier.size(16.dp), tint = Palette.amber) },
+                    )
+                }
                 for (kind in SoundKind.entries) {
                     val n = counts[kind] ?: continue
                     FilterChip(
-                        selected = filter == kind,
-                        onClick = { filter = if (filter == kind) null else kind },
+                        selected = filter == kind && !onlyStarred,
+                        onClick = { filter = if (filter == kind && !onlyStarred) null else kind; favoritesOnly = false },
                         label = { Text("${kind.title} $n") },
                         leadingIcon = { Box(Modifier.size(8.dp).clip(CircleShape).background(Palette.kind(kind))) },
                     )
@@ -285,9 +375,13 @@ fun RecordsScreen() {
             NightCard(
                 night = night,
                 live = night.dir == liveDir,
-                showOthers = filter != null && filter != SoundKind.SPEECH,
+                showOthers = onlyStarred || (filter != null && filter != SoundKind.SPEECH),
                 player = player,
                 onShare = { share(ctx, it) },
+                onFavorite = {
+                    Nights.setFavorite(it, !it.favorite)
+                    version++
+                },
                 onDeleteClip = { pending = PendingDelete.OneClip(it) },
                 // The whole night goes, not only the clips the filter shows.
                 onDeleteNight = { pending = PendingDelete.WholeNight(all?.firstOrNull { it.dir == night.dir } ?: night) },
@@ -310,8 +404,14 @@ fun RecordsScreen() {
                 TextButton(onClick = {
                     player.stop()
                     when (p) {
-                        is PendingDelete.OneClip -> Nights.delete(p.clip)
-                        is PendingDelete.WholeNight -> Nights.delete(p.night)
+                        is PendingDelete.OneClip -> {
+                            Nights.delete(p.clip)
+                            Cleaned.forget(ctx, p.clip.file)
+                        }
+                        is PendingDelete.WholeNight -> {
+                            Nights.delete(p.night)
+                            p.night.clips.forEach { Cleaned.forget(ctx, it.file) }
+                        }
                     }
                     pending = null
                     version++
@@ -330,6 +430,7 @@ private fun NightCard(
     showOthers: Boolean,
     player: ClipPlayer,
     onShare: (Clip) -> Unit,
+    onFavorite: (Clip) -> Unit,
     onDeleteClip: (Clip) -> Unit,
     onDeleteNight: () -> Unit,
     onReport: () -> Unit,
@@ -373,14 +474,14 @@ private fun NightCard(
                 // Several phrases: one tap plays them all, at the chosen speed.
                 val all = player.playingAll == night.dir
                 TextButton(
-                    onClick = { if (all) player.stop() else player.playAll(night.dir, speech.map { it.file }) },
+                    onClick = { if (all) player.stop() else player.playAll(night.dir, speech) },
                     modifier = Modifier.padding(horizontal = 8.dp),
                 ) { Text(if (all) "Остановить" else "Слушать подряд · ${phrases(speech.size)}") }
             }
-            ClipList(speech, player, onShare, onDeleteClip)
+            ClipList(speech, player, onShare, onFavorite, onDeleteClip)
             if (unclear.isNotEmpty()) {
                 if (showOthers) {
-                    ClipList(unclear, player, onShare, onDeleteClip)
+                    ClipList(unclear, player, onShare, onFavorite, onDeleteClip)
                 } else {
                     if (speech.isNotEmpty()) HorizontalDivider(Modifier.padding(horizontal = 20.dp))
                     Row(
@@ -399,7 +500,7 @@ private fun NightCard(
                             color = Palette.amber, style = MaterialTheme.typography.labelLarge,
                         )
                     }
-                    if (unclearOpen) ClipList(unclear, player, onShare, onDeleteClip)
+                    if (unclearOpen) ClipList(unclear, player, onShare, onFavorite, onDeleteClip)
                 }
             }
             if (samples.isNotEmpty()) {
@@ -409,7 +510,7 @@ private fun NightCard(
                     color = Palette.muted, style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 4.dp),
                 )
-                ClipList(samples, player, onShare, onDeleteClip)
+                ClipList(samples, player, onShare, onFavorite, onDeleteClip)
             }
         }
     }
@@ -441,23 +542,35 @@ private fun NightMenu(onDeleteNight: () -> Unit, onReport: () -> Unit) {
 }
 
 @Composable
-private fun ClipList(clips: List<Clip>, player: ClipPlayer, onShare: (Clip) -> Unit, onDelete: (Clip) -> Unit) {
+private fun ClipList(
+    clips: List<Clip>,
+    player: ClipPlayer,
+    onShare: (Clip) -> Unit,
+    onFavorite: (Clip) -> Unit,
+    onDelete: (Clip) -> Unit,
+) {
     clips.forEachIndexed { i, clip ->
         if (i > 0) HorizontalDivider(Modifier.padding(start = 76.dp))
-        ClipRow(clip, player, onShare, onDelete)
+        ClipRow(clip, player, onShare, onFavorite, onDelete)
     }
 }
 
 @Composable
-private fun ClipRow(clip: Clip, player: ClipPlayer, onShare: (Clip) -> Unit, onDelete: (Clip) -> Unit) {
+private fun ClipRow(
+    clip: Clip,
+    player: ClipPlayer,
+    onShare: (Clip) -> Unit,
+    onFavorite: (Clip) -> Unit,
+    onDelete: (Clip) -> Unit,
+) {
     val playing = player.current == clip.file
     Column(
         Modifier
-            .clickable { player.toggle(clip.file) }
+            .clickable { player.toggle(clip) }
             .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            FilledTonalIconButton(onClick = { player.toggle(clip.file) }) {
+            FilledTonalIconButton(onClick = { player.toggle(clip) }) {
                 Icon(if (playing) Glyphs.Pause else Glyphs.Play, if (playing) "Пауза" else "Слушать")
             }
             Spacer(Modifier.width(12.dp))
@@ -472,27 +585,47 @@ private fun ClipRow(clip: Clip, player: ClipPlayer, onShare: (Clip) -> Unit, onD
                     )
                 }
             }
+            IconButton(onClick = { onFavorite(clip) }) {
+                Icon(
+                    if (clip.favorite) Glyphs.Star else Glyphs.StarOutline,
+                    if (clip.favorite) "Убрать из избранного" else "В избранное",
+                    tint = if (clip.favorite) Palette.amber else Palette.muted,
+                )
+            }
             IconButton(onClick = { onShare(clip) }) { Icon(Icons.Filled.Share, "Отправить", tint = Palette.muted) }
             IconButton(onClick = { onDelete(clip) }) { Icon(Icons.Filled.Delete, "Удалить", tint = Palette.muted) }
         }
         if (playing) {
-            // Wind on and speed up to get through a night faster.
-            Row(Modifier.fillMaxWidth().padding(start = 52.dp), verticalAlignment = Alignment.CenterVertically) {
+            // Wind on, make it louder and speed it up to get through a night faster.
+            Column(Modifier.fillMaxWidth().padding(start = 52.dp)) {
                 Slider(
                     value = player.progress,
                     onValueChange = { player.seekTo(it) },
-                    modifier = Modifier.weight(1f).semantics { contentDescription = "Перемотка" },
+                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Перемотка" },
                     colors = SliderDefaults.colors(
                         thumbColor = Palette.amber, activeTrackColor = Palette.amber, inactiveTrackColor = Palette.line,
                     ),
                 )
-                Text(
-                    "${clock(player.positionMs)} / ${clock(player.durationMs)}",
-                    style = MaterialTheme.typography.labelSmall, color = Palette.muted,
-                    modifier = Modifier.padding(horizontal = 6.dp),
-                )
-                TextButton(onClick = { player.nextSpeed() }) {
-                    Text(speedLabel(player.speed), color = Palette.amber, fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "${clock(player.positionMs)} / ${clock(player.durationMs)}",
+                        style = MaterialTheme.typography.labelSmall, color = Palette.muted,
+                        modifier = Modifier.weight(1f).padding(horizontal = 6.dp),
+                    )
+                    if (player.cleans(clip)) {
+                        TextButton(
+                            onClick = { player.toggleLouder() },
+                            modifier = Modifier.semantics { stateDescription = if (player.louder) "включено" else "выключено" },
+                        ) {
+                            Text(
+                                "Громче", color = if (player.louder) Palette.amber else Palette.muted,
+                                fontWeight = if (player.louder) FontWeight.SemiBold else FontWeight.Normal,
+                            )
+                        }
+                    }
+                    TextButton(onClick = { player.nextSpeed() }) {
+                        Text(speedLabel(player.speed), color = Palette.amber, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
         }
