@@ -134,7 +134,8 @@ class ScreensTest {
         compose.onNodeWithText("Разбудить не позже").assertDoesNotExist()
         compose.onAllNodes(isToggleable())[1].performScrollTo().performClick()
         compose.onNodeWithText("Разбудить не позже").assertExists()
-        compose.onNodeWithText("30 мин").assertExists()
+        // The wake-up window (15/30/45); "30 мин" is also a choice for when speech counts.
+        compose.onNodeWithText("45 мин").assertExists()
         assertTrue(Prefs(ctx).alarmOn)
     }
 
@@ -198,7 +199,7 @@ class ScreensTest {
         compose.onNodeWithText("Слушать подряд · 2 фразы").assertExists()
         compose.onNodeWithText("01:10:00").assertExists()
         compose.onNodeWithText("01:20:00").assertDoesNotExist()
-        compose.onNodeWithText("Неразборчиво · 1").performClick()
+        compose.onNodeWithText("Неразборчиво · 1").performScrollTo().performClick()
         compose.onNodeWithText("01:20:00").assertExists()
     }
 
